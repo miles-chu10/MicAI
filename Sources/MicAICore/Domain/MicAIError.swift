@@ -12,6 +12,13 @@ public enum MicAIError: Error, Equatable, Sendable {
   case modelDownloadFailed
   case asrNotInitialized
   case asrFailed
+  case credentialMissing
+  case credentialMalformed
+  case llmUnauthorized
+  case llmForbidden
+  case llmRateLimited
+  case llmServerFailure
+  case llmIncomplete
   case targetChanged
   case clipboardChanged
   case insertionFailed
@@ -42,6 +49,20 @@ extension MicAIError: LocalizedError {
       "The speech model is not ready."
     case .asrFailed:
       "Speech recognition failed."
+    case .credentialMissing:
+      "Sign in with Codex before using AI Commands."
+    case .credentialMalformed:
+      "The Codex credential file could not be read."
+    case .llmUnauthorized:
+      "The Codex session is no longer authorized. Sign in again and retry."
+    case .llmForbidden:
+      "The ChatGPT command route is not available for this account."
+    case .llmRateLimited:
+      "AI Commands are temporarily rate limited. Try again shortly."
+    case .llmServerFailure:
+      "The language model service is unavailable."
+    case .llmIncomplete:
+      "The language model returned an incomplete response."
     case .targetChanged:
       "The target application changed before insertion."
     case .clipboardChanged:

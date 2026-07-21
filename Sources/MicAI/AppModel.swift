@@ -17,6 +17,7 @@ final class AppModel: ObservableObject {
   private let coordinator: OperationCoordinator
   private let recognizer: FluidAudioRecognizer
   private let pipeline: DictationPipeline
+  private let commandPipeline: CommandPipeline
   private let targetTracker: TargetApplicationTracker
   private let insertionCoordinator: TextInsertionCoordinator
   private var operationID: UUID?
@@ -46,10 +47,21 @@ final class AppModel: ObservableObject {
       cleaner: TranscriptCleaner(),
       coordinator: coordinator
     )
-    insertionCoordinator = TextInsertionCoordinator(
+    let insertionCoordinator = TextInsertionCoordinator(
       pasteboard: SystemPasteboardAdapter(),
       keyboard: CGEventKeyboardSynthesizer(),
       targetValidator: targetTracker
+    )
+    self.insertionCoordinator = insertionCoordinator
+    commandPipeline = CommandPipeline(
+      dictationPipeline: pipeline,
+      commandEngine: CommandEngine(
+        transformer: ChatGPTResponsesClient(
+          credentialLoader: CodexAuthFileLoader()
+        )
+      ),
+      insertionCoordinator: insertionCoordinator,
+      coordinator: coordinator
     )
 
     Task { @MainActor [weak self] in
@@ -89,25 +101,27 @@ final class AppModel: ObservableObject {
   }
 
   private func handleHotkey(mode: MicAIMode, action: HotkeyAction) {
-    guard mode == .dictation else {
-      hotkeyMonitor.reset(mode: .command)
-      errorMessage = "AI Commands are not available yet."
-      return
-    }
     Task {
-      switch action {
-      case .startRecording:
+      switch (mode, action) {
+      case (.dictation, .startRecording):
         await startDictation()
-      case .stopRecording:
+      case (.dictation, .stopRecording):
         await finishDictation()
-      case .cancelRecording:
+      case (.dictation, .cancelRecording):
         await cancelDictation()
+      case (.command, .startRecording):
+        await startCommand()
+      case (.command, .stopRecording):
+        await finishCommand()
+      case (.command, .cancelRecording):
+        await cancelCommand()
       }
     }
   }
 
   private func startDictation() async {
     guard operationID == nil else {
+      hotkeyMonitor.reset(mode: .dictation)
       return
     }
     guard modelState == .ready else {
@@ -151,6 +165,7 @@ final class AppModel: ObservableObject {
       )
     } catch {
       if error as? MicAIError == .cancelled {
+        clearOperation()
         hotkeyMonitor.reset(mode: .dictation)
         return
       }
@@ -213,6 +228,128 @@ final class AppModel: ObservableObject {
     clearOperation()
   }
 
+  private func startCommand() async {
+    guard operationID == nil else {
+      hotkeyMonitor.reset(mode: .command)
+      return
+    }
+    guard modelState == .ready else {
+      rejectCommandStart(with: .asrNotInitialized)
+      return
+    }
+
+    microphonePermission.refresh()
+    guard microphonePermission.isGranted else {
+      rejectCommandStart(with: .microphoneDenied)
+      return
+    }
+    accessibilityPermission.refresh()
+    guard accessibilityPermission.isTrusted else {
+      rejectCommandStart(with: .accessibilityDenied)
+      return
+    }
+    guard let target = await targetTracker.capture() else {
+      rejectCommandStart(with: .targetChanged)
+      return
+    }
+
+    do {
+      errorMessage = nil
+      lastTranscript = nil
+      let appModel = self
+      _ = try await commandPipeline.begin(
+        target: target,
+        levels: { level in
+          Task { @MainActor in
+            appModel.inputLevel = level
+          }
+        },
+        operationStarted: { operationID in
+          await MainActor.run {
+            appModel.operationID = operationID
+            appModel.operationTarget = target
+            appModel.operationPhase = .recording
+          }
+        }
+      )
+    } catch {
+      if error as? MicAIError == .cancelled {
+        clearOperation()
+        hotkeyMonitor.reset(mode: .command)
+        return
+      }
+      let micAIError = (error as? MicAIError) ?? .insertionFailed
+      errorMessage = micAIError.localizedDescription
+      operationPhase = .failed(micAIError)
+      clearOperation()
+      hotkeyMonitor.reset(mode: .command)
+    }
+  }
+
+  private func finishCommand() async {
+    guard let operationID, let target = operationTarget else {
+      return
+    }
+
+    operationPhase = .transcribing
+    inputLevel = 0
+    do {
+      let appModel = self
+      let result = try await commandPipeline.finish(
+        operationID: operationID,
+        model: settingsStore.settings.llmModel,
+        awaitingLLM: {
+          await MainActor.run {
+            appModel.operationPhase = .awaitingLLM
+          }
+        }
+      )
+      guard await coordinator.markInserting(operationID: operationID) else {
+        throw MicAIError.cancelled
+      }
+      operationPhase = .inserting
+      accessibilityPermission.refresh()
+      guard accessibilityPermission.isTrusted else {
+        throw MicAIError.accessibilityDenied
+      }
+
+      do {
+        try await insertionCoordinator.apply(result.intent, to: target)
+      } catch let error as MicAIError where error == .clipboardChanged {
+        _ = await coordinator.complete(operationID: operationID)
+        complete(
+          transcript: result.instruction,
+          diagnostic: error.localizedDescription
+        )
+        return
+      }
+
+      guard await coordinator.complete(operationID: operationID) else {
+        throw MicAIError.cancelled
+      }
+      complete(transcript: result.instruction)
+    } catch {
+      let micAIError = (error as? MicAIError) ?? .llmServerFailure
+      if await coordinator.isCurrent(operationID: operationID) {
+        _ = await coordinator.fail(operationID: operationID, error: micAIError)
+      }
+      errorMessage = micAIError.localizedDescription
+      operationPhase = .failed(micAIError)
+      clearOperation()
+    }
+  }
+
+  private func cancelCommand() async {
+    guard let operationID else {
+      return
+    }
+    await commandPipeline.cancel(operationID: operationID)
+    operationPhase = .idle
+    errorMessage = nil
+    inputLevel = 0
+    clearOperation()
+  }
+
   private func complete(transcript: Transcript, diagnostic: String? = nil) {
     lastTranscript = transcript.text
     errorMessage = diagnostic
@@ -228,5 +365,10 @@ final class AppModel: ObservableObject {
   private func rejectDictationStart(with error: MicAIError) {
     errorMessage = error.localizedDescription
     hotkeyMonitor.reset(mode: .dictation)
+  }
+
+  private func rejectCommandStart(with error: MicAIError) {
+    errorMessage = error.localizedDescription
+    hotkeyMonitor.reset(mode: .command)
   }
 }
