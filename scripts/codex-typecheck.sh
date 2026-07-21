@@ -3,11 +3,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
-LOCAL_DEV_ENV="${CODEX_LOCAL_DEV_ENV:-$PROJECT_ROOT/../.codex/scripts/local-dev-env.sh}"
 
-if [ ! -f "$LOCAL_DEV_ENV" ]; then
-  echo "Error: local dev helper not found: $LOCAL_DEV_ENV" >&2
-  exit 1
+if [ -n "${MICAI_SDKROOT:-}" ]; then
+  export SDKROOT="$MICAI_SDKROOT"
+elif [ -z "${SDKROOT:-}" ]; then
+  SWIFT_VERSION="$(swift --version)"
+  COMPATIBLE_SDK="/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+  if [[ "$SWIFT_VERSION" == *"Swift version 6.3."* ]] && [ -d "$COMPATIBLE_SDK" ]; then
+    export SDKROOT="$COMPATIBLE_SDK"
+  fi
 fi
 
-exec bash "$LOCAL_DEV_ENV" "typecheck" "$PROJECT_ROOT"
+cd "$PROJECT_ROOT"
+exec swift build --configuration debug "$@"

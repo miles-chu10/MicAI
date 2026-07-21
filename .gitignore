@@ -14,5 +14,8 @@ build/
 .ruff_cache/
 .build/
 .swiftpm/
+.swiftpm-cache/
+.swiftpm-config/
+.swiftpm-security/
+.research/
 *.xcodeproj
-dist/
