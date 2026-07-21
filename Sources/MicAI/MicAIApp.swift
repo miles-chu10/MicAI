@@ -4,17 +4,42 @@ import SwiftUI
 
 @main
 struct MicAIApp: App {
-  @StateObject private var settingsStore = SettingsStore()
+  @StateObject private var appModel = AppModel()
 
   var body: some Scene {
     MenuBarExtra("MicAI", systemImage: "mic.fill") {
-      VStack(alignment: .leading, spacing: 8) {
-        Text("MicAI")
-          .font(.headline)
-        Label("Idle", systemImage: "circle")
-          .foregroundStyle(.secondary)
+      VStack(alignment: .leading, spacing: 10) {
+        HStack {
+          Text("MicAI")
+            .font(.headline)
+          Spacer()
+          Text(phaseLabel)
+            .foregroundStyle(.secondary)
+        }
+
+        if appModel.operationPhase == .recording {
+          ProgressView(value: appModel.inputLevel)
+            .accessibilityLabel("Microphone input level")
+        }
+
+        ModelStatusView(
+          state: appModel.modelState,
+          transcript: appModel.lastTranscript,
+          prepare: appModel.prepareModel
+        )
+
+        Divider()
+
+        permissionControls
+
+        if let errorMessage = appModel.errorMessage {
+          Text(errorMessage)
+            .font(.caption)
+            .foregroundStyle(.red)
+        }
       }
       .padding(.horizontal)
+      .frame(width: 320)
 
       Divider()
 
@@ -29,13 +54,52 @@ struct MicAIApp: App {
     }
 
     Settings {
-      SettingsView(store: settingsStore)
+      SettingsView(store: appModel.settingsStore) {
+        appModel.applySettings()
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var permissionControls: some View {
+    if appModel.microphonePermission.isGranted {
+      Label("Microphone ready", systemImage: "mic.fill")
+    } else {
+      Button("Allow Microphone") {
+        appModel.requestMicrophonePermission()
+      }
+    }
+
+    if appModel.accessibilityPermission.isTrusted {
+      Label("Accessibility ready", systemImage: "checkmark.shield.fill")
+    } else {
+      Button("Allow Accessibility") {
+        appModel.requestAccessibilityPermission()
+      }
+    }
+  }
+
+  private var phaseLabel: String {
+    switch appModel.operationPhase {
+    case .idle:
+      "Idle"
+    case .recording:
+      "Recording"
+    case .transcribing:
+      "Transcribing"
+    case .awaitingLLM:
+      "Waiting"
+    case .inserting:
+      "Inserting"
+    case .failed:
+      "Failed"
     }
   }
 }
 
 private struct SettingsView: View {
   @ObservedObject var store: SettingsStore
+  let didSave: () -> Void
 
   var body: some View {
     Form {
@@ -65,7 +129,9 @@ private struct SettingsView: View {
       HStack {
         Spacer()
         Button("Save") {
-          store.save()
+          if store.save() {
+            didSave()
+          }
         }
         .keyboardShortcut(.defaultAction)
       }

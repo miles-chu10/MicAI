@@ -24,7 +24,7 @@ public actor OperationCoordinator {
     let id: UUID
     let mode: MicAIMode
     let target: TargetIdentity
-    var cancellationTasks: [Task<Void, Never>]
+    var cancellationHandlers: [@Sendable () -> Void]
   }
 
   private var activeOperation: ActiveOperation?
@@ -41,7 +41,7 @@ public actor OperationCoordinator {
       id: UUID(),
       mode: mode,
       target: target,
-      cancellationTasks: []
+      cancellationHandlers: []
     )
     activeOperation = operation
     currentPhase = .recording
@@ -77,12 +77,23 @@ public actor OperationCoordinator {
     _ task: Task<Void, Never>,
     operationID: UUID
   ) -> Bool {
+    registerCancellationHandler(
+      { task.cancel() },
+      operationID: operationID
+    )
+  }
+
+  @discardableResult
+  public func registerCancellationHandler(
+    _ handler: @escaping @Sendable () -> Void,
+    operationID: UUID
+  ) -> Bool {
     guard var operation = activeOperation, operation.id == operationID else {
-      task.cancel()
+      handler()
       return false
     }
 
-    operation.cancellationTasks.append(task)
+    operation.cancellationHandlers.append(handler)
     activeOperation = operation
     return true
   }
@@ -104,8 +115,8 @@ public actor OperationCoordinator {
       return false
     }
 
-    for task in activeOperation?.cancellationTasks ?? [] {
-      task.cancel()
+    for handler in activeOperation?.cancellationHandlers ?? [] {
+      handler()
     }
     activeOperation = nil
     currentPhase = .failed(error)
@@ -117,8 +128,8 @@ public actor OperationCoordinator {
       return
     }
 
-    for task in activeOperation?.cancellationTasks ?? [] {
-      task.cancel()
+    for handler in activeOperation?.cancellationHandlers ?? [] {
+      handler()
     }
     activeOperation = nil
     currentPhase = .idle
