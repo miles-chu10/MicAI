@@ -20,7 +20,11 @@ public actor TextInsertionCoordinator {
     self.delay = delay
   }
 
-  public func readSelection() async throws -> String? {
+  public func readSelection(from target: TargetIdentity? = nil) async throws -> String? {
+    if let target, !(await targetValidator.isCurrent(target)) {
+      throw MicAIError.targetChanged
+    }
+
     let original = try pasteboard.snapshot()
     do {
       try keyboard.copy()
@@ -32,6 +36,10 @@ public actor TextInsertionCoordinator {
     let copied = try pasteboard.snapshot()
     guard copied.changeCount != original.changeCount else {
       return nil
+    }
+    if let target, !(await targetValidator.isCurrent(target)) {
+      try restore(original, ifCurrentChangeCountIs: copied.changeCount)
+      throw MicAIError.targetChanged
     }
     let selection = SelectionResult(snapshot: copied)
     try restore(original, ifCurrentChangeCountIs: copied.changeCount)
@@ -46,10 +54,17 @@ public actor TextInsertionCoordinator {
 
   public func apply(
     _ intent: InsertionIntent,
-    to target: TargetIdentity
+    to target: TargetIdentity,
+    while operationIsCurrent: @escaping @Sendable () async -> Bool = { true }
   ) async throws {
+    guard await operationIsCurrent() else {
+      throw MicAIError.cancelled
+    }
     guard await targetValidator.isCurrent(target) else {
       throw MicAIError.targetChanged
+    }
+    guard await operationIsCurrent() else {
+      throw MicAIError.cancelled
     }
 
     let original = try pasteboard.snapshot()
@@ -66,20 +81,63 @@ public actor TextInsertionCoordinator {
       throw MicAIError.insertionFailed
     }
 
+    guard await operationIsCurrent() else {
+      try restoreBeforePaste(
+        original,
+        ifCurrentChangeCountIs: writtenChangeCount,
+        primaryError: .cancelled,
+        restorationError: .clipboardRestoreFailedAfterCancellation
+      )
+    }
     guard await targetValidator.isCurrent(target) else {
-      try restore(original, ifCurrentChangeCountIs: writtenChangeCount)
-      throw MicAIError.targetChanged
+      try restoreBeforePaste(
+        original,
+        ifCurrentChangeCountIs: writtenChangeCount,
+        primaryError: .targetChanged,
+        restorationError: .clipboardRestoreFailedAfterTargetChange
+      )
+    }
+    guard await operationIsCurrent() else {
+      try restoreBeforePaste(
+        original,
+        ifCurrentChangeCountIs: writtenChangeCount,
+        primaryError: .cancelled,
+        restorationError: .clipboardRestoreFailedAfterCancellation
+      )
     }
 
     do {
       try keyboard.paste()
     } catch {
-      try restore(original, ifCurrentChangeCountIs: writtenChangeCount)
-      throw MicAIError.insertionFailed
+      try restoreBeforePaste(
+        original,
+        ifCurrentChangeCountIs: writtenChangeCount,
+        primaryError: .insertionFailed,
+        restorationError: .clipboardRestoreFailedBeforeInsertion
+      )
     }
 
     await delay()
     try restore(original, ifCurrentChangeCountIs: writtenChangeCount)
+  }
+
+  private func restoreBeforePaste(
+    _ snapshot: PasteboardSnapshot,
+    ifCurrentChangeCountIs expectedChangeCount: Int,
+    primaryError: MicAIError,
+    restorationError: MicAIError
+  ) throws -> Never {
+    do {
+      try restore(
+        snapshot,
+        ifCurrentChangeCountIs: expectedChangeCount
+      )
+    } catch let error as MicAIError where error == .clipboardChanged {
+      throw primaryError
+    } catch {
+      throw restorationError
+    }
+    throw primaryError
   }
 
   private func restore(

@@ -46,7 +46,7 @@ public actor CommandPipeline {
     )
 
     do {
-      let selectedText = try await insertionCoordinator.readSelection()
+      let selectedText = try await insertionCoordinator.readSelection(from: target)
       guard await coordinator.isCurrent(operationID: operationID) else {
         throw MicAIError.cancelled
       }

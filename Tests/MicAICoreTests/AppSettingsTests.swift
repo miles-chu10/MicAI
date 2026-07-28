@@ -27,10 +27,22 @@ struct AppSettingsTests {
   }
 
   @Test
-  func validationRejectsEmptyModel() {
+  func validationAllowsEmptyModelWhileCommandsAreDisabled() throws {
     let settings = AppSettings(
       dictationHotkey: .rightOption,
       commandHotkey: nil,
+      dictationActivationMode: .hold,
+      llmModel: " \n "
+    )
+
+    #expect(try settings.validated().llmModel == "")
+  }
+
+  @Test
+  func validationRejectsEmptyModelWhenCommandsAreEnabled() {
+    let settings = AppSettings(
+      dictationHotkey: .rightOption,
+      commandHotkey: .controlOptionSpace,
       dictationActivationMode: .hold,
       llmModel: " \n "
     )
@@ -58,6 +70,30 @@ struct AppSettingsTests {
     } catch {
       #expect(error as? AppSettingsValidationError == .duplicateHotkeys)
     }
+  }
+
+  @Test
+  func validationRejectsUnmodifiedNonModifierKey() {
+    let settings = AppSettings(
+      dictationHotkey: Hotkey(keyCode: 49),
+      commandHotkey: nil,
+      dictationActivationMode: .hold,
+      llmModel: ""
+    )
+
+    do {
+      _ = try settings.validated()
+      Issue.record("Expected validation to reject an unusable hotkey")
+    } catch {
+      #expect(error as? AppSettingsValidationError == .unusableHotkey)
+    }
+  }
+
+  @Test
+  func hotkeyNamesAreHumanReadable() {
+    #expect(Hotkey.rightOption.displayName == "Right Option")
+    #expect(Hotkey.controlOptionSpace.displayName == "⌃⌥Space")
+    #expect(Hotkey.commandShiftSpace.displayName == "⇧⌘Space")
   }
 
   @Test

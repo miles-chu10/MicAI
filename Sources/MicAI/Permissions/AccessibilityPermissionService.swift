@@ -1,3 +1,4 @@
+import AppKit
 @preconcurrency import ApplicationServices
 import Combine
 
@@ -15,5 +16,16 @@ final class AccessibilityPermissionService: ObservableObject {
         kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
       ] as CFDictionary
     isTrusted = AXIsProcessTrustedWithOptions(options)
+  }
+
+  func openSystemSettings() {
+    guard
+      let url = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+      )
+    else {
+      return
+    }
+    NSWorkspace.shared.open(url)
   }
 }

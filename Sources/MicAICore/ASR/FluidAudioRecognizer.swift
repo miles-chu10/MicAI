@@ -11,6 +11,23 @@ public actor FluidAudioRecognizer: SpeechRecognizing {
 
   public init() {}
 
+  public func prepareCachedIfAvailable(
+    progress: @escaping @Sendable (ModelPreparationState) -> Void
+  ) async throws -> Bool {
+    let cacheDirectory = AsrModels.defaultCacheDirectory(for: .v2)
+    guard
+      AsrModels.modelsExist(
+        at: cacheDirectory,
+        version: .v2,
+        encoderPrecision: .int8
+      )
+    else {
+      return false
+    }
+    try await prepare(progress: progress)
+    return true
+  }
+
   public func prepare(
     progress: @escaping @Sendable (ModelPreparationState) -> Void
   ) async throws {

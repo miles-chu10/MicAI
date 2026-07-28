@@ -9,16 +9,24 @@ final class GlobalHotkeyMonitor {
   private var dictationHotkey: Hotkey
   private var commandHotkey: Hotkey?
   private var dictationMachine: HotkeyStateMachine
-  private var commandMachine = HotkeyStateMachine(activationMode: .toggle)
+  private var commandMachine = HotkeyStateMachine(activationMode: .hold)
+  private var dictationChordTracker = HotkeyChordTracker()
+  private var commandChordTracker = HotkeyChordTracker()
   private let actionHandler: ActionHandler
+  private let cancelHandler: @MainActor @Sendable () -> Void
 
-  init(settings: AppSettings, actionHandler: @escaping ActionHandler) {
+  init(
+    settings: AppSettings,
+    actionHandler: @escaping ActionHandler,
+    cancelHandler: @escaping @MainActor @Sendable () -> Void
+  ) {
     dictationHotkey = settings.dictationHotkey
     commandHotkey = settings.commandHotkey
     dictationMachine = HotkeyStateMachine(
       activationMode: settings.dictationActivationMode
     )
     self.actionHandler = actionHandler
+    self.cancelHandler = cancelHandler
   }
 
   func update(settings: AppSettings) {
@@ -27,7 +35,9 @@ final class GlobalHotkeyMonitor {
     dictationMachine = HotkeyStateMachine(
       activationMode: settings.dictationActivationMode
     )
-    commandMachine = HotkeyStateMachine(activationMode: .toggle)
+    commandMachine = HotkeyStateMachine(activationMode: .hold)
+    dictationChordTracker = HotkeyChordTracker()
+    commandChordTracker = HotkeyChordTracker()
   }
 
   func reset(mode: MicAIMode) {
@@ -36,8 +46,10 @@ final class GlobalHotkeyMonitor {
       dictationMachine = HotkeyStateMachine(
         activationMode: dictationMachine.activationMode
       )
+      dictationChordTracker = HotkeyChordTracker()
     case .command:
-      commandMachine = HotkeyStateMachine(activationMode: .toggle)
+      commandMachine = HotkeyStateMachine(activationMode: .hold)
+      commandChordTracker = HotkeyChordTracker()
     }
   }
 
@@ -64,18 +76,29 @@ final class GlobalHotkeyMonitor {
 
   private func receive(_ event: GlobalHotkeyEvent) {
     if event.kind == .keyDown, event.keyCode == 53, !event.isRepeat {
-      emit(machine: &dictationMachine, mode: .dictation, event: .cancel)
-      emit(machine: &commandMachine, mode: .command, event: .cancel)
+      reset(mode: .dictation)
+      reset(mode: .command)
+      cancelHandler()
       return
     }
 
-    if matches(event, hotkey: dictationHotkey) {
+    if Self.matches(
+      event,
+      hotkey: dictationHotkey,
+      chordTracker: &dictationChordTracker
+    ) {
       emit(
         machine: &dictationMachine,
         mode: .dictation,
         event: inputEvent(from: event)
       )
-    } else if let commandHotkey, matches(event, hotkey: commandHotkey) {
+    } else if let commandHotkey,
+      Self.matches(
+        event,
+        hotkey: commandHotkey,
+        chordTracker: &commandChordTracker
+      )
+    {
       emit(
         machine: &commandMachine,
         mode: .command,
@@ -95,14 +118,18 @@ final class GlobalHotkeyMonitor {
     actionHandler(mode, action)
   }
 
-  private func matches(_ event: GlobalHotkeyEvent, hotkey: Hotkey) -> Bool {
-    guard event.keyCode == hotkey.keyCode else {
+  private static func matches(
+    _ event: GlobalHotkeyEvent,
+    hotkey: Hotkey,
+    chordTracker: inout HotkeyChordTracker
+  ) -> Bool {
+    if hotkey == .rightOption {
+      return event.keyCode == hotkey.keyCode && event.kind == .flagsChanged
+    }
+    guard let chordEvent = event.chordEvent else {
       return false
     }
-    if hotkey == .rightOption {
-      return event.kind == .flagsChanged
-    }
-    return event.kind != .flagsChanged && event.modifiers == hotkey.modifiers
+    return chordTracker.matches(chordEvent, hotkey: hotkey)
   }
 
   private func inputEvent(from event: GlobalHotkeyEvent) -> HotkeyInputEvent? {
@@ -129,6 +156,17 @@ private struct GlobalHotkeyEvent: Sendable {
   let modifiers: Set<HotkeyModifier>
   let isRepeat: Bool
   let optionDown: Bool
+
+  var chordEvent: HotkeyChordEvent? {
+    switch kind {
+    case .keyDown:
+      .keyDown(keyCode: keyCode, modifiers: modifiers)
+    case .keyUp:
+      .keyUp(keyCode: keyCode, modifiers: modifiers)
+    case .flagsChanged:
+      nil
+    }
+  }
 
   init(event: NSEvent) {
     switch event.type {

@@ -54,6 +54,116 @@ struct ChatGPTResponsesClientTests {
   }
 
   @Test
+  func reassemblesSSEEventsFragmentedAcrossEveryByteBoundary() async throws {
+    let body = deltaFrame("HEL") + deltaFrame("LO") + completedFrame()
+    let chunks = Data(body.utf8).map { Data([$0]) }
+    let client = ChatGPTResponsesClient(
+      credentialLoader: CountingCredentialLoader(),
+      transport: FakeTransport([
+        ResponsesHTTPResponse(statusCode: 200, bodyChunks: chunks)
+      ])
+    )
+
+    #expect(try await client.transform(anyRequest()) == "HELLO")
+  }
+
+  @Test
+  func cancellationStopsMidStreamPromptly() async {
+    let body = CancellableResponseBody(initialChunk: Data(deltaFrame("PARTIAL").utf8))
+    let transport = FakeTransport([
+      ResponsesHTTPResponse(statusCode: 200, body: body.stream)
+    ])
+    let client = ChatGPTResponsesClient(
+      credentialLoader: CountingCredentialLoader(),
+      transport: transport
+    )
+    let transform = Task {
+      try await client.transform(anyRequest())
+    }
+
+    while await transport.requests.isEmpty {
+      await Task.yield()
+    }
+    for _ in 0..<10 {
+      await Task.yield()
+    }
+    let startedAt = ContinuousClock.now
+    transform.cancel()
+
+    do {
+      _ = try await transform.value
+      Issue.record("Expected cancellation")
+    } catch {
+      #expect(error as? MicAIError == .cancelled)
+    }
+    #expect(ContinuousClock.now - startedAt < .seconds(1))
+    #expect(body.wasCancelled)
+  }
+
+  @Test
+  func cancellationBeforeResponseHeadersMapsToCancelled() async {
+    let client = ChatGPTResponsesClient(
+      credentialLoader: CountingCredentialLoader(),
+      transport: FailingTransport(error: URLError(.cancelled))
+    )
+
+    await expectFailure(from: client, request: anyRequest(), is: .cancelled)
+  }
+
+  @Test
+  func transportTimeoutMapsToServerFailure() async {
+    let timeout = URLError(.timedOut)
+    let transport = FakeTransport([
+      ResponsesHTTPResponse(
+        statusCode: 200,
+        body: AsyncThrowingStream<Data, any Error> { continuation in
+          continuation.finish(throwing: timeout)
+        }
+      )
+    ])
+    let client = ChatGPTResponsesClient(
+      credentialLoader: CountingCredentialLoader(),
+      transport: transport,
+      requestTimeout: 0.25
+    )
+
+    await expectFailure(from: client, request: anyRequest(), is: .llmServerFailure)
+    #expect(await transport.requests.first?.timeoutInterval == 0.25)
+  }
+
+  @Test
+  func earlyEOFDiscardsPartialOutput() async {
+    let client = ChatGPTResponsesClient(
+      credentialLoader: CountingCredentialLoader(),
+      transport: FakeTransport([
+        ResponsesHTTPResponse(
+          statusCode: 200,
+          bodyChunks: [Data(deltaFrame("PARTIAL").utf8)]
+        )
+      ])
+    )
+
+    await expectFailure(from: client, request: anyRequest(), is: .llmIncomplete)
+  }
+
+  @Test
+  func completesAfterMultipleStreamedEvents() async throws {
+    let chunks = [
+      Data(deltaFrame("ONE ").utf8),
+      Data(deltaFrame("TWO").utf8),
+      Data(completedFrame().utf8),
+    ]
+    let client = ChatGPTResponsesClient(
+      credentialLoader: CountingCredentialLoader(),
+      transport: FakeTransport([
+        ResponsesHTTPResponse(statusCode: 200, bodyChunks: chunks)
+      ])
+    )
+
+    #expect(try await client.transform(anyRequest()) == "ONE TWO")
+  }
+
+  @Test
   func unauthorizedTriggersExactlyOneReloadAndRetry() async throws {
     let loader = CountingCredentialLoader()
     let transport = FakeTransport([
@@ -67,6 +177,23 @@ struct ChatGPTResponsesClientTests {
     #expect(output == "OK")
     #expect(loader.loadCount == 2)
     #expect(await transport.requests.count == 2)
+  }
+
+  @Test
+  func providerStatusReportsCredentialRetryAndRecovery() async throws {
+    let statuses = ProviderStatusCollector()
+    let client = ChatGPTResponsesClient(
+      credentialLoader: CountingCredentialLoader(),
+      transport: FakeTransport([
+        ResponsesHTTPResponse(statusCode: 401, bodyChunks: []),
+        okResponse(deltas: ["OK"]),
+      ]),
+      statusHandler: statuses.append
+    )
+
+    _ = try await client.transform(anyRequest())
+
+    #expect(statuses.values == [.retryingCredential, .readyToAttempt])
   }
 
   @Test
@@ -146,6 +273,42 @@ struct ChatGPTResponsesClientTests {
   }
 }
 
+private struct FailingTransport: ResponsesHTTPTransport {
+  let error: URLError
+
+  func perform(_ request: URLRequest) async throws -> ResponsesHTTPResponse {
+    throw error
+  }
+}
+
+private final class CancellableResponseBody: @unchecked Sendable {
+  private let lock = NSLock()
+  private var cancelled = false
+  private var continuation: AsyncThrowingStream<Data, any Error>.Continuation?
+  let stream: AsyncThrowingStream<Data, any Error>
+
+  init(initialChunk: Data) {
+    var capturedContinuation: AsyncThrowingStream<Data, any Error>.Continuation?
+    stream = AsyncThrowingStream { continuation in
+      capturedContinuation = continuation
+    }
+    continuation = capturedContinuation
+    continuation?.onTermination = { [weak self] termination in
+      guard case .cancelled = termination else {
+        return
+      }
+      self?.lock.withLock {
+        self?.cancelled = true
+      }
+    }
+    continuation?.yield(initialChunk)
+  }
+
+  var wasCancelled: Bool {
+    lock.withLock { cancelled }
+  }
+}
+
 private actor FakeTransport: ResponsesHTTPTransport {
   private var queue: [ResponsesHTTPResponse]
   private(set) var requests: [URLRequest] = []
@@ -188,6 +351,21 @@ private final class CountingCredentialLoader: CredentialLoading, @unchecked Send
         throw error
       }
       return credential
+    }
+  }
+}
+
+private final class ProviderStatusCollector: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storedValues: [ProviderStatus] = []
+
+  var values: [ProviderStatus] {
+    lock.withLock { storedValues }
+  }
+
+  func append(_ status: ProviderStatus) {
+    lock.withLock {
+      storedValues.append(status)
     }
   }
 }

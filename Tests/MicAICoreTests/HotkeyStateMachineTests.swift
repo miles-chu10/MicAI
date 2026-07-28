@@ -39,4 +39,55 @@ struct HotkeyStateMachineTests {
     #expect(machine.handle(.cancel) == nil)
     #expect(!machine.isRecording)
   }
+
+  @Test
+  func chordTrackerAcceptsPrimaryKeyFirstRelease() {
+    var tracker = HotkeyChordTracker()
+    var machine = HotkeyStateMachine(activationMode: .hold)
+    let hotkey = Hotkey.controlOptionSpace
+
+    let matchedPress = tracker.matches(
+      .keyDown(keyCode: hotkey.keyCode, modifiers: hotkey.modifiers),
+      hotkey: hotkey
+    )
+    #expect(matchedPress)
+    #expect(machine.handle(.pressed(isRepeat: false)) == .startRecording)
+    let matchedRelease = tracker.matches(
+      .keyUp(keyCode: hotkey.keyCode, modifiers: hotkey.modifiers),
+      hotkey: hotkey
+    )
+    #expect(matchedRelease)
+    #expect(machine.handle(.released) == .stopRecording)
+  }
+
+  @Test
+  func chordTrackerAcceptsModifierFirstReleaseAndIgnoresUnrelatedKeyUp() {
+    var tracker = HotkeyChordTracker()
+    var machine = HotkeyStateMachine(activationMode: .hold)
+    let hotkey = Hotkey.controlOptionSpace
+
+    let matchedPress = tracker.matches(
+      .keyDown(keyCode: hotkey.keyCode, modifiers: hotkey.modifiers),
+      hotkey: hotkey
+    )
+    #expect(matchedPress)
+    #expect(machine.handle(.pressed(isRepeat: false)) == .startRecording)
+    let matchedUnrelatedRelease = tracker.matches(
+      .keyUp(keyCode: 48, modifiers: []),
+      hotkey: hotkey
+    )
+    #expect(!matchedUnrelatedRelease)
+    #expect(machine.isRecording)
+    let matchedRelease = tracker.matches(
+      .keyUp(keyCode: hotkey.keyCode, modifiers: []),
+      hotkey: hotkey
+    )
+    #expect(matchedRelease)
+    #expect(machine.handle(.released) == .stopRecording)
+    let matchedDuplicateRelease = tracker.matches(
+      .keyUp(keyCode: hotkey.keyCode, modifiers: []),
+      hotkey: hotkey
+    )
+    #expect(!matchedDuplicateRelease)
+  }
 }

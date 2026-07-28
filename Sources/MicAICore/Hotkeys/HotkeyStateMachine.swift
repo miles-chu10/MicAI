@@ -10,6 +10,34 @@ public enum HotkeyAction: Sendable, Equatable {
   case cancelRecording
 }
 
+public enum HotkeyChordEvent: Sendable, Equatable {
+  case keyDown(keyCode: UInt16, modifiers: Set<HotkeyModifier>)
+  case keyUp(keyCode: UInt16, modifiers: Set<HotkeyModifier>)
+}
+
+public struct HotkeyChordTracker: Sendable {
+  private var activeKeyCode: UInt16?
+
+  public init() {}
+
+  public mutating func matches(_ event: HotkeyChordEvent, hotkey: Hotkey) -> Bool {
+    switch event {
+    case .keyDown(let keyCode, let modifiers):
+      guard keyCode == hotkey.keyCode, modifiers == hotkey.modifiers else {
+        return false
+      }
+      activeKeyCode = keyCode
+      return true
+    case .keyUp(let keyCode, _):
+      guard activeKeyCode == keyCode, hotkey.keyCode == keyCode else {
+        return false
+      }
+      activeKeyCode = nil
+      return true
+    }
+  }
+}
+
 public struct HotkeyStateMachine: Sendable {
   public private(set) var isRecording = false
   public var activationMode: DictationActivationMode

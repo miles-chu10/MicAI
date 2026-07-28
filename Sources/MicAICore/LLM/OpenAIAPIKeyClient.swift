@@ -24,6 +24,7 @@ public actor OpenAIAPIKeyClient: LLMTransforming {
     var urlRequest = URLRequest(url: Self.endpoint)
     urlRequest.httpMethod = "POST"
     urlRequest.httpBody = try ResponsesRequest(request: request).encodedData()
+    urlRequest.timeoutInterval = ChatGPTResponsesClient.defaultRequestTimeout
     urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
     urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
     urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -32,6 +33,8 @@ public actor OpenAIAPIKeyClient: LLMTransforming {
     do {
       response = try await transport.perform(urlRequest)
     } catch is CancellationError {
+      throw MicAIError.cancelled
+    } catch let error as URLError where error.code == .cancelled {
       throw MicAIError.cancelled
     } catch let error as MicAIError {
       throw error
@@ -42,11 +45,24 @@ public actor OpenAIAPIKeyClient: LLMTransforming {
     switch response.statusCode {
     case 200..<300:
       var parser = SSEParser()
-      for chunk in response.bodyChunks {
+      do {
+        for try await chunk in response.body {
+          try Task.checkCancellation()
+          try parser.append(chunk)
+        }
         try Task.checkCancellation()
-        try parser.append(chunk)
+        return try parser.finish()
+      } catch is CancellationError {
+        throw MicAIError.cancelled
+      } catch let error as URLError
+        where error.code == .cancelled && Task.isCancelled
+      {
+        throw MicAIError.cancelled
+      } catch let error as MicAIError {
+        throw error
+      } catch {
+        throw MicAIError.llmServerFailure
       }
-      return try parser.finish()
     case 401:
       throw MicAIError.llmUnauthorized
     case 403:

@@ -8,6 +8,10 @@ CONTENTS_DIR="$APP_BUNDLE/Contents"
 EXECUTABLE_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 PLIST_PATH="$CONTENTS_DIR/Info.plist"
+ICON_WORK_DIR="$PROJECT_ROOT/.build/micai-app-icon"
+ICONSET_DIR="$ICON_WORK_DIR/MicAI.iconset"
+ICON_GENERATOR="$ICON_WORK_DIR/generate-app-icon"
+ICON_PATH="$RESOURCES_DIR/MicAI.icns"
 
 if [ -n "${MICAI_SDKROOT:-}" ]; then
   export SDKROOT="$MICAI_SDKROOT"
@@ -35,12 +39,18 @@ if [ -e "$APP_BUNDLE" ]; then
   esac
 fi
 
-mkdir -p "$EXECUTABLE_DIR" "$RESOURCES_DIR"
+mkdir -p "$EXECUTABLE_DIR" "$RESOURCES_DIR" "$ICON_WORK_DIR"
 install -m 755 "$BIN_DIR/MicAI" "$EXECUTABLE_DIR/MicAI"
+swiftc "$PROJECT_ROOT/scripts/generate-app-icon.swift" \
+  -framework AppKit \
+  -o "$ICON_GENERATOR"
+"$ICON_GENERATOR" "$ICONSET_DIR"
+/usr/bin/iconutil --convert icns --output "$ICON_PATH" "$ICONSET_DIR"
 
 /usr/bin/plutil -create xml1 "$PLIST_PATH"
 /usr/bin/plutil -insert CFBundleDisplayName -string "MicAI" "$PLIST_PATH"
 /usr/bin/plutil -insert CFBundleExecutable -string "MicAI" "$PLIST_PATH"
+/usr/bin/plutil -insert CFBundleIconFile -string "MicAI" "$PLIST_PATH"
 /usr/bin/plutil -insert CFBundleIdentifier -string "com.mileschu.micai" "$PLIST_PATH"
 /usr/bin/plutil -insert CFBundleName -string "MicAI" "$PLIST_PATH"
 /usr/bin/plutil -insert CFBundlePackageType -string "APPL" "$PLIST_PATH"

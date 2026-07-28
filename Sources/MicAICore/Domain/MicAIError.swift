@@ -21,6 +21,9 @@ public enum MicAIError: Error, Equatable, Sendable {
   case llmIncomplete
   case targetChanged
   case clipboardChanged
+  case clipboardRestoreFailedAfterCancellation
+  case clipboardRestoreFailedAfterTargetChange
+  case clipboardRestoreFailedBeforeInsertion
   case insertionFailed
 }
 
@@ -67,6 +70,12 @@ extension MicAIError: LocalizedError {
       "The target application changed before insertion."
     case .clipboardChanged:
       "The clipboard changed before it could be restored."
+    case .clipboardRestoreFailedAfterCancellation:
+      "The operation was cancelled, but the original clipboard could not be restored."
+    case .clipboardRestoreFailedAfterTargetChange:
+      "Insertion was withheld after the target changed, but the original clipboard could not be restored."
+    case .clipboardRestoreFailedBeforeInsertion:
+      "Insertion failed before paste, and the original clipboard could not be restored."
     case .insertionFailed:
       "Text insertion failed."
     }
