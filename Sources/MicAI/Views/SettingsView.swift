@@ -5,6 +5,8 @@ struct SettingsView: View {
   @ObservedObject var appModel: AppModel
   @ObservedObject private var store: SettingsStore
   @State private var draft: AppSettings
+  @Environment(\.dismiss) private var dismiss
+  @Environment(\.openWindow) private var openWindow
 
   init(appModel: AppModel) {
     self.appModel = appModel
@@ -13,117 +15,152 @@ struct SettingsView: View {
   }
 
   var body: some View {
-    Form {
-      Section("Dictation") {
-        Picker(
-          "Hotkey",
-          selection: $draft.dictationHotkey
-        ) {
-          ForEach(Self.dictationHotkeys, id: \.self) { hotkey in
-            Text(hotkey.displayName).tag(hotkey)
+    VStack(spacing: 0) {
+      Form {
+        Section("Dictation") {
+          Picker(
+            "Hotkey",
+            selection: $draft.dictationHotkey
+          ) {
+            ForEach(Self.dictationHotkeys, id: \.self) { hotkey in
+              Text(hotkey.displayName).tag(hotkey)
+            }
+          }
+
+          Picker(
+            "Activation",
+            selection: $draft.dictationActivationMode
+          ) {
+            ForEach(DictationActivationMode.allCases, id: \.self) { mode in
+              Text(mode.displayName).tag(mode)
+            }
           }
         }
 
-        Picker(
-          "Activation",
-          selection: $draft.dictationActivationMode
-        ) {
-          ForEach(DictationActivationMode.allCases, id: \.self) { mode in
-            Text(mode.displayName).tag(mode)
+        Section("AI Commands") {
+          Picker(
+            "Hotkey",
+            selection: $draft.commandHotkey
+          ) {
+            Text("Not configured").tag(nil as Hotkey?)
+            ForEach(Self.commandHotkeys, id: \.self) { hotkey in
+              Text(hotkey.displayName).tag(hotkey as Hotkey?)
+            }
           }
+          TextField(
+            "ChatGPT model",
+            text: $draft.llmModel,
+            prompt: Text("Enter a supported subscription model")
+          )
+          LabeledContent("Authentication", value: "ChatGPT sign-in")
+          LabeledContent("Status", value: appModel.providerStatus.summary)
+          Text(
+            "MicAI uses your existing Codex sign-in with ChatGPT for subscription access."
+          )
+          .font(.footnote)
+          .foregroundStyle(.secondary)
         }
-      }
 
-      Section("AI Commands") {
-        Picker(
-          "Hotkey",
-          selection: $draft.commandHotkey
-        ) {
-          Text("Not configured").tag(nil as Hotkey?)
-          ForEach(Self.commandHotkeys, id: \.self) { hotkey in
-            Text(hotkey.displayName).tag(hotkey as Hotkey?)
+        Section("Readiness") {
+          SettingsStatusRow(
+            title: "Microphone",
+            ready: appModel.microphonePermission.isGranted,
+            readyText: "Allowed",
+            blockedText: "Required",
+            actionTitle: appModel.microphonePermission.status == .undetermined
+              ? "Request Access…" : "Open Settings…"
+          ) {
+            if appModel.microphonePermission.status == .undetermined {
+              appModel.requestMicrophonePermission()
+            } else {
+              appModel.microphonePermission.openSystemSettings()
+            }
           }
-        }
-        TextField(
-          "ChatGPT model",
-          text: $draft.llmModel,
-          prompt: Text("Enter a supported subscription model")
-        )
-        LabeledContent("Provider", value: appModel.providerStatus.summary)
-      }
 
-      Section("Readiness") {
-        SettingsStatusRow(
-          title: "Microphone",
-          ready: appModel.microphonePermission.isGranted,
-          readyText: "Allowed",
-          blockedText: "Required"
-        ) {
-          if appModel.microphonePermission.status == .undetermined {
-            appModel.requestMicrophonePermission()
-          } else {
-            appModel.microphonePermission.openSystemSettings()
+          SettingsStatusRow(
+            title: "Accessibility",
+            ready: appModel.accessibilityPermission.isTrusted,
+            readyText: "Allowed",
+            blockedText: "Required",
+            actionTitle: "Request Access…"
+          ) {
+            appModel.requestAccessibilityPermission()
           }
-        }
 
-        SettingsStatusRow(
-          title: "Accessibility",
-          ready: appModel.accessibilityPermission.isTrusted,
-          readyText: "Allowed",
-          blockedText: "Required"
-        ) {
-          appModel.requestAccessibilityPermission()
-        }
-
-        LabeledContent("Local speech model") {
-          HStack {
-            Text(modelStatus)
-            if appModel.modelState != .ready {
-              Button("Prepare") {
-                appModel.prepareModel()
+          LabeledContent("Local speech model") {
+            HStack(spacing: 10) {
+              Text(modelStatus)
+              if case .preparing(let fraction, _) = appModel.modelState {
+                ProgressView(value: fraction)
+                  .frame(width: 90)
+                  .accessibilityLabel("Speech model preparation")
+              } else if appModel.modelState != .ready {
+                Button("Prepare") {
+                  appModel.prepareModel()
+                }
               }
             }
           }
         }
-      }
 
-      Section("System") {
-        Toggle(
-          "Launch MicAI at login",
-          isOn: Binding(
-            get: { appModel.launchAtLogin.isEnabled },
-            set: { appModel.launchAtLogin.setEnabled($0) }
+        Section("System") {
+          Toggle(
+            "Launch MicAI at login",
+            isOn: Binding(
+              get: { appModel.launchAtLogin.isEnabled },
+              set: { appModel.launchAtLogin.setEnabled($0) }
+            )
           )
-        )
-        LabeledContent("Login item", value: appModel.launchAtLogin.status.label)
-        if let launchError = appModel.launchAtLogin.errorMessage {
-          Text(launchError)
-            .foregroundStyle(.red)
+          LabeledContent("Login item", value: appModel.launchAtLogin.status.label)
+          if let launchError = appModel.launchAtLogin.errorMessage {
+            Label {
+              Text(launchError)
+            } icon: {
+              Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+            }
+          }
+        }
+
+        if let validationMessage = store.validationMessage {
+          Label {
+            Text(validationMessage)
+          } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+              .foregroundStyle(.red)
+          }
         }
       }
+      .formStyle(.grouped)
+      .scenePadding()
 
-      if let validationMessage = store.validationMessage {
-        Text(validationMessage)
-          .foregroundStyle(.red)
-      }
-
+      Divider()
       HStack {
-        Button("Run Setup Again") {
+        Button("Run Setup Again", systemImage: "checklist") {
           appModel.showOnboarding()
+          dismiss()
+          MainWindowPresenter.show(using: openWindow)
         }
         Spacer()
-        Button("Save") {
+        if draft != store.settings {
+          Text("Unsaved changes")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
+        Button("Save", systemImage: "checkmark") {
           if store.save(draft) {
             draft = store.settings
             appModel.applySettings()
           }
         }
+        .buttonStyle(.borderedProminent)
         .keyboardShortcut(.defaultAction)
+        .disabled(draft == store.settings)
       }
+      .padding(16)
+      .background(.bar)
     }
-    .formStyle(.grouped)
-    .padding()
-    .frame(width: 540, height: 600)
+    .frame(width: 560, height: 680)
     .onAppear {
       draft = store.settings
     }
@@ -159,18 +196,22 @@ private struct SettingsStatusRow: View {
   let ready: Bool
   let readyText: String
   let blockedText: String
+  let actionTitle: String
   let action: () -> Void
 
   var body: some View {
     LabeledContent(title) {
       HStack {
-        Label(
-          ready ? readyText : blockedText,
-          systemImage: ready ? "checkmark.circle.fill" : "exclamationmark.circle"
-        )
-        .foregroundStyle(ready ? Color.green : Color.secondary)
+        Label {
+          Text(ready ? readyText : blockedText)
+        } icon: {
+          Image(
+            systemName: ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
+          )
+          .foregroundStyle(ready ? Color.green : Color.orange)
+        }
         if !ready {
-          Button("Fix…", action: action)
+          Button(actionTitle, action: action)
         }
       }
     }

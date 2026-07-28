@@ -5,14 +5,19 @@ struct RecordingHUDView: View {
   let phase: OperationPhase
   let inputLevel: Float
   let message: String?
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     HStack(spacing: 14) {
       Image(systemName: phase.systemImage)
-        .font(.system(size: 24, weight: .semibold))
+        .font(.title2)
         .foregroundStyle(phase.tint)
-        .symbolEffect(.pulse, isActive: phase == .recording)
+        .symbolEffect(
+          .pulse,
+          isActive: phase == .recording && !reduceMotion
+        )
         .frame(width: 36)
+        .accessibilityHidden(true)
 
       VStack(alignment: .leading, spacing: 7) {
         Text(phase.displayName)
@@ -23,9 +28,10 @@ struct RecordingHUDView: View {
             .progressViewStyle(.linear)
             .tint(.red)
             .accessibilityLabel("Microphone input level")
+            .accessibilityValue("\(inputPercentage) percent")
         } else if case .failed = phase {
           Text(message ?? "Open MicAI for recovery options.")
-            .font(.caption)
+            .font(.callout)
             .foregroundStyle(.secondary)
             .lineLimit(2)
         } else {
@@ -36,10 +42,12 @@ struct RecordingHUDView: View {
 
       Spacer()
 
-      Text("Esc to cancel")
-        .font(.caption)
+      Label("Escape to cancel", systemImage: "escape")
+        .font(.callout)
         .foregroundStyle(.secondary)
-        .opacity(phase == .inserting ? 0 : 1)
+        .labelStyle(.titleAndIcon)
+        .opacity(canCancel ? 1 : 0)
+        .accessibilityHidden(!canCancel)
     }
     .padding(.horizontal, 18)
     .padding(.vertical, 14)
@@ -47,8 +55,21 @@ struct RecordingHUDView: View {
     .background(.regularMaterial, in: .rect(cornerRadius: 16))
     .overlay {
       RoundedRectangle(cornerRadius: 16)
-        .stroke(.white.opacity(0.12), lineWidth: 1)
+        .stroke(.separator, lineWidth: 1)
     }
     .accessibilityElement(children: .combine)
+  }
+
+  private var canCancel: Bool {
+    switch phase {
+    case .recording, .transcribing, .awaitingLLM:
+      true
+    case .idle, .inserting, .failed:
+      false
+    }
+  }
+
+  private var inputPercentage: Int {
+    min(max(Int((inputLevel / 0.25) * 100), 0), 100)
   }
 }

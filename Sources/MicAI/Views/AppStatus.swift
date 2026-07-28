@@ -5,7 +5,7 @@ extension OperationPhase {
   var displayName: String {
     switch self {
     case .idle:
-      "Ready"
+      "Idle"
     case .recording:
       "Recording"
     case .transcribing:
@@ -22,7 +22,7 @@ extension OperationPhase {
   var systemImage: String {
     switch self {
     case .idle:
-      "checkmark.circle.fill"
+      "circle.fill"
     case .recording:
       "waveform.circle.fill"
     case .transcribing:
@@ -39,7 +39,7 @@ extension OperationPhase {
   var tint: Color {
     switch self {
     case .idle:
-      .green
+      .secondary
     case .recording:
       .red
     case .transcribing, .awaitingLLM, .inserting:
@@ -54,12 +54,22 @@ struct StatusPill: View {
   let phase: OperationPhase
 
   var body: some View {
-    Label(phase.displayName, systemImage: phase.systemImage)
-      .font(.callout.weight(.medium))
-      .foregroundStyle(phase.tint)
-      .padding(.horizontal, 10)
-      .padding(.vertical, 6)
-      .background(phase.tint.opacity(0.12), in: .capsule)
-      .accessibilityLabel("MicAI status: \(phase.displayName)")
+    HStack(spacing: 6) {
+      Circle()
+        .fill(phase.tint)
+        .frame(width: 8, height: 8)
+        .accessibilityHidden(true)
+
+      Text(phase.displayName)
+        .foregroundStyle(.secondary)
+    }
+    .font(.callout)
+    .padding(.horizontal, 10)
+    .padding(.vertical, 6)
+    .background(.quaternary, in: .capsule)
+    .fixedSize()
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("MicAI operation: \(phase.displayName)")
+    .help("Current MicAI operation: \(phase.displayName)")
   }
 }

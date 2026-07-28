@@ -6,31 +6,30 @@ struct MenuContentView: View {
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
-    Button("Open MicAI") {
-      NSApplication.shared.activate(ignoringOtherApps: true)
-      openWindow(id: "main")
+    Button("Open MicAI", systemImage: "macwindow") {
+      MainWindowPresenter.show(using: openWindow)
     }
     .keyboardShortcut("0", modifiers: .command)
 
     Divider()
 
-    Label(
-      appModel.operationPhase.displayName,
-      systemImage: appModel.operationPhase.systemImage
-    )
+    Label {
+      Text("Status: \(appModel.operationPhase.displayName)")
+    } icon: {
+      Image(systemName: appModel.operationPhase.systemImage)
+    }
 
     if appModel.isOperationActive {
-      Button("Cancel Current Operation") {
+      Button("Cancel Current Operation", systemImage: "xmark.circle") {
         appModel.cancelCurrentOperation()
       }
       .keyboardShortcut(.cancelAction)
     }
 
     if !appModel.readiness.dictation.isReady {
-      Button("Review Setup…") {
+      Button("Review Setup…", systemImage: "checklist") {
         appModel.showOnboarding()
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        openWindow(id: "main")
+        MainWindowPresenter.show(using: openWindow)
       }
     }
 
@@ -40,7 +39,7 @@ struct MenuContentView: View {
       Label("Settings…", systemImage: "gearshape")
     }
 
-    Button("Quit MicAI") {
+    Button("Quit MicAI", systemImage: "power") {
       NSApplication.shared.terminate(nil)
     }
     .keyboardShortcut("q", modifiers: .command)
@@ -53,21 +52,20 @@ struct MicAICommands: Commands {
 
   var body: some Commands {
     CommandGroup(after: .appInfo) {
-      Button("Open MicAI") {
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        openWindow(id: "main")
+      Button("Open MicAI", systemImage: "macwindow") {
+        MainWindowPresenter.show(using: openWindow)
       }
       .keyboardShortcut("0", modifiers: .command)
     }
 
     CommandMenu("Dictation") {
-      Button("Cancel Current Operation") {
+      Button("Cancel Current Operation", systemImage: "xmark.circle") {
         appModel.cancelCurrentOperation()
       }
       .keyboardShortcut(.cancelAction)
       .disabled(!appModel.isOperationActive)
 
-      Button("Prepare Local Speech Model") {
+      Button("Prepare Local Speech Model", systemImage: "arrow.down.circle") {
         appModel.prepareModel()
       }
       .disabled(appModel.modelState == .ready)
