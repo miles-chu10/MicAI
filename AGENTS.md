@@ -33,3 +33,31 @@ and verifies builds.
 - `~/.codex/auth.json` is read-only input for the LLM provider; never copy or write
   tokens anywhere. Never edit .env directly; keep secrets out of committed files.
 - Keep CLAUDE.md concise and project-specific.
+
+## Cursor Cloud specific instructions
+
+Cursor Cloud agents run on **Linux (Ubuntu 24.04, x86_64)**. MicAI is a **macOS-only**
+app, so the standard build/run/test path CANNOT complete in the cloud VM. Do not
+treat build/run/test failures here as regressions — they are the expected platform
+mismatch. Full dev work (`scripts/codex-build.sh`, `codex-run.sh`, `codex-test.sh`)
+requires macOS 14+/Apple Silicon with the swiftly toolchain (see `docs/BRIEF.md`).
+
+What breaks and why (Linux):
+- `swift build`/`swift test` fail while compiling the `FluidAudio` dependency:
+  `MachTaskSelfWrapper/MachTaskSelf.c` includes `mach/mach.h` (Darwin/Mach kernel
+  header, macOS-only), and FluidAudio also ships an Apple `.xcframework` binary target.
+- `MicAICore`/`MicAI` sources import `AVFoundation`, `AppKit`, `SwiftUI`, `CoreML`,
+  `CoreGraphics`, `ServiceManagement` — none available on Linux Swift.
+- The build/run scripts call macOS-only tooling (`plutil`, `codesign`, `iconutil`,
+  `/usr/bin/open`, `swiftc -framework AppKit`).
+
+What DOES work on Linux (only with a Swift toolchain installed, not present by default):
+- `swift package resolve` (SwiftPM metadata resolves fine).
+- Lint: `swift format lint --recursive --strict Package.swift Sources Tests`
+  (i.e. `scripts/codex-lint.sh`) — parses syntax only, no Apple frameworks needed.
+
+To lint in the cloud VM, install a Swift Linux toolchain on demand (this is a one-off,
+NOT baked into the reliability-critical update script). Example:
+`curl -fsSL https://download.swift.org/swift-6.0.3-release/ubuntu2404/swift-6.0.3-RELEASE/swift-6.0.3-RELEASE-ubuntu24.04.tar.gz | tar xz -C /tmp`
+then `sudo apt-get install -y libncurses6 libpython3-dev libedit2 libxml2 libcurl4 libz3-4`
+and put `/tmp/swift-6.0.3-RELEASE-ubuntu24.04/usr/bin` on `PATH`.
