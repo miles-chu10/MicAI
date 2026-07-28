@@ -6,6 +6,14 @@ Hold a hotkey, speak, and polished text lands at your cursor in any app — or s
 
 > **Status:** early prototype (v0.1.0). Built as a personal / research P0. Expect rough edges, incomplete manual verification, and breaking changes. Not a polished App Store product.
 
+<p align="center">
+  <img src="docs/images/main-window-overview.jpg" alt="MicAI main window Overview: sidebar with Dictation, AI Commands, and Activity; privacy callout and setup guidance" width="720" />
+</p>
+
+<p align="center">
+  <img src="docs/images/settings.jpg" alt="MicAI Settings: dictation hotkey, ChatGPT model and auth, microphone and Accessibility readiness" width="360" />
+</p>
+
 ## Features
 
 - **Menu bar app** — SwiftUI `MenuBarExtra`, no Dock icon
