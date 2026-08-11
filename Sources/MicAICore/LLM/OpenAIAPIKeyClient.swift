@@ -3,6 +3,12 @@ import Foundation
 public actor OpenAIAPIKeyClient: LLMTransforming {
   public static let endpoint = URL(string: "https://api.openai.com/v1/responses")!
 
+  public static func hasKey(
+    in environment: [String: String] = ProcessInfo.processInfo.environment
+  ) -> Bool {
+    normalizedAPIKey(in: environment) != nil
+  }
+
   private let apiKey: String?
   private let transport: any ResponsesHTTPTransport
 
@@ -10,9 +16,7 @@ public actor OpenAIAPIKeyClient: LLMTransforming {
     environment: [String: String] = ProcessInfo.processInfo.environment,
     transport: any ResponsesHTTPTransport = URLSessionResponsesTransport()
   ) {
-    let value = environment["OPENAI_API_KEY"]?
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    apiKey = value?.isEmpty == false ? value : nil
+    apiKey = Self.normalizedAPIKey(in: environment)
     self.transport = transport
   }
 
@@ -72,5 +76,13 @@ public actor OpenAIAPIKeyClient: LLMTransforming {
     default:
       throw MicAIError.llmServerFailure
     }
+  }
+
+  private static func normalizedAPIKey(
+    in environment: [String: String]
+  ) -> String? {
+    let value = environment["OPENAI_API_KEY"]?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    return value?.isEmpty == false ? value : nil
   }
 }

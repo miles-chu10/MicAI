@@ -12,6 +12,7 @@ struct AppSettingsTests {
     #expect(settings.dictationActivationMode == .hold)
     #expect(settings.commandHotkey == nil)
     #expect(settings.llmModel == "")
+    #expect(settings.llmProvider == .chatgptSubscription)
   }
 
   @Test
@@ -102,7 +103,8 @@ struct AppSettingsTests {
       dictationHotkey: .rightOption,
       commandHotkey: Hotkey(keyCode: 49, modifiers: [.command]),
       dictationActivationMode: .toggle,
-      llmModel: "gpt-test"
+      llmModel: "gpt-test",
+      llmProvider: .openAIAPIKey
     )
 
     let data = try JSONEncoder().encode(settings)
@@ -117,8 +119,31 @@ struct AppSettingsTests {
           "commandHotkey",
           "dictationActivationMode",
           "llmModel",
+          "llmProvider",
         ]
     )
     #expect(try JSONDecoder().decode(AppSettings.self, from: data) == settings)
+  }
+
+  @Test
+  func decodingLegacyJSONDefaultsToChatGPTSubscription() throws {
+    let json = """
+      {
+        "dictationHotkey": {
+          "keyCode": 61,
+          "modifiers": []
+        },
+        "commandHotkey": null,
+        "dictationActivationMode": "hold",
+        "llmModel": ""
+      }
+      """
+
+    let settings = try JSONDecoder().decode(
+      AppSettings.self,
+      from: Data(json.utf8)
+    )
+
+    #expect(settings.llmProvider == .chatgptSubscription)
   }
 }

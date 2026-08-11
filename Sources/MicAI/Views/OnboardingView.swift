@@ -162,16 +162,14 @@ struct OnboardingView: View {
 
   private var commandStep: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text(
-        "AI Commands use your existing Codex CLI sign-in at command time. MicAI treats that credential as read-only and never displays or stores its values."
-      )
+      Text(providerDescription)
       LabeledContent(
         "Command hotkey",
         value: appModel.settingsStore.settings.commandHotkey?.displayName
           ?? "Choose one in Settings"
       )
       LabeledContent(
-        "ChatGPT model",
+        "Model",
         value: appModel.settingsStore.settings.llmModel.isEmpty
           ? "Choose one in Settings" : appModel.settingsStore.settings.llmModel
       )
@@ -182,6 +180,15 @@ struct OnboardingView: View {
       )
       .font(.caption)
       .foregroundStyle(.secondary)
+    }
+  }
+
+  private var providerDescription: String {
+    switch appModel.settingsStore.settings.llmProvider {
+    case .chatgptSubscription:
+      "AI Commands use your existing Codex CLI sign-in at command time. MicAI treats that credential as read-only and never displays or stores its values."
+    case .openAIAPIKey:
+      "AI Commands use OPENAI_API_KEY from MicAI's process environment. MicAI never displays or stores the key."
     }
   }
 
