@@ -27,7 +27,7 @@ public actor OpenAIAPIKeyClient: LLMTransforming {
 
     var urlRequest = URLRequest(url: Self.endpoint)
     urlRequest.httpMethod = "POST"
-    urlRequest.httpBody = try ResponsesRequest(request: request).encodedData()
+    urlRequest.httpBody = try ResponsesRequest(request: request).encodedData(for: .openAI)
     urlRequest.timeoutInterval = ChatGPTResponsesClient.defaultRequestTimeout
     urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
     urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
