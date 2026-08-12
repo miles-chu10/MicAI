@@ -29,8 +29,9 @@ credential values, request bodies, or token/path contents.
 
 ### A. Fresh onboarding and TCC recovery
 
-1. Run `bash scripts/codex-build.sh`, quit every existing MicAI process, and
-   launch `dist/MicAI.app`.
+1. Run `bash scripts/codex-run.sh`, which installs and launches
+   `/Applications/MicAI.app`. Do not launch a transient `dist/MicAI.app` for TCC
+   recovery testing because macOS privacy grants are path-sensitive.
 2. To exercise first-run presentation without touching unrelated preferences,
    first back up MicAI's own preferences with
    `defaults export com.mileschu.micai ~/Desktop/MicAI-pre-acceptance.plist`,

@@ -8,6 +8,10 @@ Local-first AI dictation and AI-commands app for macOS: Parakeet TDT v2 on-devic
 bash scripts/codex-install.sh
 ```
 
+The installer defaults to `/Applications/MicAI.app` so macOS privacy grants
+attach to a stable bundle path. Use `MICAI_INSTALL_DIR=/path` only for isolated
+packaging tests, not for Accessibility or microphone acceptance testing.
+
 ## Common Commands
 
 ```bash

@@ -6,7 +6,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
 if [ -n "${MICAI_SDKROOT:-}" ]; then
   export SDKROOT="$MICAI_SDKROOT"
-elif [ -z "${SDKROOT:-}" ]; then
+else
   SWIFT_VERSION="$(swift --version)"
   COMPATIBLE_SDK="/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
   if [[ "$SWIFT_VERSION" == *"Swift version 6.3."* ]] && [ -d "$COMPATIBLE_SDK" ]; then
