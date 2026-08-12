@@ -23,7 +23,8 @@ flowchart LR
   Route -->|Dictation| Insert[Insertion coordinator]
   Route -->|AI Command| Command[Command engine]
   Selection[Selection capture] --> Command
-  Auth[Read-only auth.json loader] --> LLM[ChatGPT Responses SSE client]
+  Auth[Read-only auth.json loader] --> LLM[Responses SSE client]
+  APIKey[OPENAI_API_KEY env] --> LLM
   Command --> LLM
   LLM --> Insert
   Insert --> Pasteboard[Injected pasteboard port]
@@ -367,7 +368,7 @@ let result = try await manager.transcribe(
 
 The resolved `v0.15.5` README shows a `transcribe(samples)` quick start, but no such argument-free public overload exists in the resolved Parakeet manager source. MicAI must compile against the declarations above and treat the README example as stale.
 
-## Verified ChatGPT-subscription request contract
+## Verified ChatGPT-subscription request contract (opt-in provider)
 
 ### Source and endpoint
 
@@ -484,14 +485,27 @@ data: {"type":"response.completed","response":{"id":"resp_..."}}
 
 Verified parser source: [`sse/responses.rs`](https://github.com/openai/codex/blob/rust-v0.144.6/codex-rs/codex-api/src/sse/responses.rs).
 
-### Auth lifecycle and fallback
+### Provider selection and auth lifecycle
+
+MicAI has two user-selectable LLM providers (`AppSettings.llmProvider`):
+
+1. **OpenAI API key (default, `openAIAPIKey`).** `OpenAIAPIKeyClient` posts to
+   `https://api.openai.com/v1/responses` with the same Responses SSE request shape,
+   authenticated with a bearer `Authorization` header built from the
+   `OPENAI_API_KEY` environment variable. The key is read from the process
+   environment only and is never persisted, logged, or written to any file. A
+   missing/blank key fails with `credentialMissing` before any request is made.
+2. **ChatGPT subscription (opt-in, `chatGPTSubscription`).** `ChatGPTResponsesClient`
+   uses the verified Codex contract above against
+   `https://chatgpt.com/backend-api/codex/responses`.
+
+ChatGPT-subscription auth lifecycle:
 
 1. At app session start, read `~/.codex/auth.json` and decode `tokens.access_token` and `tokens.account_id`. Never print the decoded object.
 2. Before a command, use the in-memory credential if it came from the current app session.
 3. On the first 401 only, discard it, re-read the file, and retry once.
 4. A second 401 becomes `llmUnauthorized`. MicAI does not refresh, rewrite, or invoke OAuth in P0.
-5. Do not automatically downgrade generic network, 429, or 5xx failures to an API key.
-6. If an implementation smoke test proves the ChatGPT backend unusable for MicAI, allow `OPENAI_API_KEY` from the process environment only and use `https://api.openai.com/v1/responses`. Never persist the key. This fallback remains unverified until that smoke test.
+5. Do not automatically downgrade generic network, 429, or 5xx failures across providers; the user switches providers explicitly in Settings.
 
 ## Permissions and system integration
 
@@ -538,10 +552,10 @@ Apple references: [MenuBarExtra](https://developer.apple.com/documentation/swift
 | `modelDownloadFailed` | Listing/download/compile/load fails | Preserve phase/error; no fake ready state | Explicit retry |
 | `asrNotInitialized` | Manager has no loaded models | Return to model status | Prepare then retry |
 | `asrFailed` | FluidAudio processing error or empty text | No insertion | Manual retry |
-| `credentialMissing` | File/fields absent and no fallback | Provider setup message | After Codex login |
+| `credentialMissing` | API key absent or auth file/fields absent for the selected provider | Provider setup message | After configuring the selected provider |
 | `credentialMalformed` | JSON/type failure | Provider error without file contents | After external repair |
 | `llmUnauthorized` | 401 after one reload | Ask user to refresh Codex login | No loop |
-| `llmForbidden` | 403 or route rejected | Report backend incompatibility | No automatic fallback until classified |
+| `llmForbidden` | 403 or route rejected | Report backend incompatibility | No automatic provider switch until classified |
 | `llmRateLimited` | 429 | Preserve selection; show retry guidance | User retry after delay |
 | `llmServerFailure` | 5xx/network timeout | Preserve selection | Bounded transport retry only |
 | `llmIncomplete` | failed/incomplete/EOF before completion | Discard partial output | Manual retry |
