@@ -156,5 +156,13 @@ struct AppSettingsTests {
       ProviderStatus.readyToAttempt.summary(for: .chatGPTSubscription)
         == "Codex credential will be checked when a command runs."
     )
+    #expect(
+      ProviderStatus.retryingCredential.summary(for: .openAIAPIKey)
+        == "Rechecking authorization with the OpenAI API."
+    )
+    #expect(
+      ProviderStatus.retryingCredential.summary(for: .chatGPTSubscription)
+        == "Reloading the Codex credential after authorization failed."
+    )
   }
 }

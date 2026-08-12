@@ -18,7 +18,12 @@ public enum ProviderStatus: Sendable, Equatable {
         "Codex credential will be checked when a command runs."
       }
     case .retryingCredential:
-      "Reloading the Codex credential after authorization failed."
+      switch provider {
+      case .openAIAPIKey:
+        "Rechecking authorization with the OpenAI API."
+      case .chatGPTSubscription:
+        "Reloading the Codex credential after authorization failed."
+      }
     case .failed(let error):
       error.localizedDescription
     }
