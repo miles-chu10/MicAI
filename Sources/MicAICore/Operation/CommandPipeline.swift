@@ -16,7 +16,7 @@ public actor CommandPipeline {
   }
 
   private let dictationPipeline: DictationPipeline
-  private let commandEngine: any CommandExecuting
+  private var commandEngine: any CommandExecuting
   private let insertionCoordinator: TextInsertionCoordinator
   private let coordinator: OperationCoordinator
   private var contexts: [UUID: Context] = [:]
@@ -31,6 +31,10 @@ public actor CommandPipeline {
     self.commandEngine = commandEngine
     self.insertionCoordinator = insertionCoordinator
     self.coordinator = coordinator
+  }
+
+  public func updateTransformer(_ transformer: any LLMTransforming) {
+    commandEngine = CommandEngine(transformer: transformer)
   }
 
   public func begin(

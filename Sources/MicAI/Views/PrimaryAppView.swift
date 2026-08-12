@@ -118,7 +118,7 @@ private struct OverviewView: View {
           Text("Speak where you work")
             .font(.largeTitle.weight(.semibold))
           Text(
-            "MicAI transcribes dictation locally and uses ChatGPT only for explicit AI Commands."
+            "MicAI transcribes dictation locally and uses an LLM only for explicit AI Commands."
           )
           .font(.title3)
           .foregroundStyle(.secondary)
@@ -257,13 +257,19 @@ private struct CommandsView: View {
           icon: "sparkles",
           title: "AI Commands",
           subtitle:
-            "Only your spoken instruction and selected text are sent to the configured ChatGPT route."
+            "Only your spoken instruction and selected text are sent to the configured LLM provider."
         )
         ReadinessList(readiness: appModel.readiness.command)
         GroupBox("Provider") {
-          LabeledContent("ChatGPT subscription") {
-            Text(appModel.providerStatus.summary)
-              .multilineTextAlignment(.trailing)
+          LabeledContent(
+            appModel.settingsStore.settings.llmProvider.displayName
+          ) {
+            Text(
+              appModel.providerStatus.summary(
+                for: appModel.settingsStore.settings.llmProvider
+              )
+            )
+            .multilineTextAlignment(.trailing)
           }
           .padding(.vertical, 6)
         }

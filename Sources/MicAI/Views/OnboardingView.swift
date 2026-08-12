@@ -163,7 +163,7 @@ struct OnboardingView: View {
   private var commandStep: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text(
-        "AI Commands use your existing Codex CLI sign-in at command time. MicAI treats that credential as read-only and never displays or stores its values."
+        "AI Commands send only your spoken instruction and selected text to the configured OpenAI model. The default provider uses an OPENAI_API_KEY environment variable, which is never displayed or stored; a ChatGPT-subscription provider that reuses your Codex CLI sign-in is available in Settings."
       )
       LabeledContent(
         "Command hotkey",
@@ -171,12 +171,16 @@ struct OnboardingView: View {
           ?? "Choose one in Settings"
       )
       LabeledContent(
-        "ChatGPT model",
+        appModel.settingsStore.settings.llmProvider.modelFieldLabel,
         value: appModel.settingsStore.settings.llmModel.isEmpty
           ? "Choose one in Settings" : appModel.settingsStore.settings.llmModel
       )
-      Text(appModel.providerStatus.summary)
-        .foregroundStyle(.secondary)
+      Text(
+        appModel.providerStatus.summary(
+          for: appModel.settingsStore.settings.llmProvider
+        )
+      )
+      .foregroundStyle(.secondary)
       Text(
         "You can finish setup with a blocker. MicAI will continue to show exactly what Dictation or AI Commands still need."
       )
@@ -222,7 +226,7 @@ private struct IntroStep: View {
         systemImage: "escape"
       )
       Text(
-        "Setup covers Microphone, Accessibility, the local speech model, and optional ChatGPT commands."
+        "Setup covers Microphone, Accessibility, the local speech model, and optional AI commands."
       )
       .foregroundStyle(.secondary)
     }

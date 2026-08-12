@@ -44,12 +44,30 @@ struct SettingsView: View {
             Text(hotkey.displayName).tag(hotkey as Hotkey?)
           }
         }
+        Picker(
+          "Provider",
+          selection: $draft.llmProvider
+        ) {
+          ForEach(LLMProvider.allCases, id: \.self) { provider in
+            Text(provider.displayName).tag(provider)
+          }
+        }
         TextField(
-          "ChatGPT model",
+          draft.llmProvider.modelFieldLabel,
           text: $draft.llmModel,
-          prompt: Text("Enter a supported subscription model")
+          prompt: Text(draft.llmProvider.modelPlaceholder)
         )
-        LabeledContent("Provider", value: appModel.providerStatus.summary)
+        if draft.llmProvider == .openAIAPIKey {
+          Text(
+            "Provide an OPENAI_API_KEY environment variable at launch. The key is read from the environment only and is never stored."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+        LabeledContent(
+          "Status",
+          value: appModel.providerStatus.summary(for: draft.llmProvider)
+        )
       }
 
       Section("Readiness") {
