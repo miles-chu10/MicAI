@@ -3,35 +3,61 @@ import SwiftUI
 
 struct MenuContentView: View {
   @ObservedObject var appModel: AppModel
-  @Environment(\.openWindow) private var openWindow
 
   var body: some View {
-    Button("Open MicAI") {
-      NSApplication.shared.activate(ignoringOtherApps: true)
-      openWindow(id: "main")
+    Button("Open MicAI", systemImage: "macwindow") {
+      MainWindowPresenter.show()
     }
     .keyboardShortcut("0", modifiers: .command)
 
     Divider()
 
-    Label(
-      appModel.operationPhase.displayName,
-      systemImage: appModel.operationPhase.systemImage
-    )
+    Label {
+      Text("Status: \(appModel.operationPhase.displayName)")
+    } icon: {
+      Image(systemName: appModel.operationPhase.systemImage)
+    }
+
+    Label {
+      Text("Dictation: \(appModel.dictationEffectiveRouteLabel)")
+    } icon: {
+      Image(
+        systemName: appModel.settingsStore.settings.dictationProvider == .openAI
+          ? "cloud.fill" : "waveform"
+      )
+    }
 
     if appModel.isOperationActive {
-      Button("Cancel Current Operation") {
+      Button("Cancel Current Operation", systemImage: "xmark.circle") {
         appModel.cancelCurrentOperation()
       }
       .keyboardShortcut(.cancelAction)
     }
 
-    if !appModel.readiness.dictation.isReady {
-      Button("Review Setup…") {
+    if !appModel.readiness.dictation.isSetupReady {
+      Button("Review Setup…", systemImage: "checklist") {
         appModel.showOnboarding()
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        openWindow(id: "main")
+        MainWindowPresenter.show()
       }
+    }
+
+    if appModel.recoverableInsertion != nil {
+      Divider()
+
+      Button("Retry Last Insertion", systemImage: "arrow.clockwise") {
+        appModel.retryRecoverableInsertion()
+      }
+      .disabled(appModel.isRecoveringInsertion)
+
+      Button("Copy Last Result", systemImage: "doc.on.doc") {
+        appModel.copyRecoverableResult()
+      }
+      .disabled(appModel.isRecoveringInsertion)
+
+      Button("Dismiss Last Result", systemImage: "xmark") {
+        appModel.dismissRecoverableInsertion()
+      }
+      .disabled(appModel.isRecoveringInsertion)
     }
 
     Divider()
@@ -40,7 +66,7 @@ struct MenuContentView: View {
       Label("Settings…", systemImage: "gearshape")
     }
 
-    Button("Quit MicAI") {
+    Button("Quit MicAI", systemImage: "power") {
       NSApplication.shared.terminate(nil)
     }
     .keyboardShortcut("q", modifiers: .command)
@@ -49,28 +75,42 @@ struct MenuContentView: View {
 
 struct MicAICommands: Commands {
   let appModel: AppModel
-  @Environment(\.openWindow) private var openWindow
 
   var body: some Commands {
     CommandGroup(after: .appInfo) {
-      Button("Open MicAI") {
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        openWindow(id: "main")
+      Button("Open MicAI", systemImage: "macwindow") {
+        MainWindowPresenter.show()
       }
       .keyboardShortcut("0", modifiers: .command)
     }
 
     CommandMenu("Dictation") {
-      Button("Cancel Current Operation") {
+      Button("Cancel Current Operation", systemImage: "xmark.circle") {
         appModel.cancelCurrentOperation()
       }
       .keyboardShortcut(.cancelAction)
       .disabled(!appModel.isOperationActive)
 
-      Button("Prepare Local Speech Model") {
+      Button("Prepare Local Speech Model", systemImage: "arrow.down.circle") {
         appModel.prepareModel()
       }
       .disabled(appModel.modelState == .ready)
+
+      Divider()
+
+      Button("Retry Last Insertion", systemImage: "arrow.clockwise") {
+        appModel.retryRecoverableInsertion()
+      }
+      .disabled(
+        appModel.recoverableInsertion == nil || appModel.isRecoveringInsertion
+      )
+
+      Button("Copy Last Result", systemImage: "doc.on.doc") {
+        appModel.copyRecoverableResult()
+      }
+      .disabled(
+        appModel.recoverableInsertion == nil || appModel.isRecoveringInsertion
+      )
     }
   }
 }

@@ -9,6 +9,7 @@ final class RecordingHUDController: ObservableObject {
   private var failureDismissTask: Task<Void, Never>?
 
   func update(
+    mode: MicAIMode?,
     phase: OperationPhase,
     level: Float,
     message: String?
@@ -20,8 +21,10 @@ final class RecordingHUDController: ObservableObject {
       return
     }
 
+    let shouldPosition = panel?.isVisible != true
     let panel = panel ?? makePanel()
     let view = RecordingHUDView(
+      mode: mode,
       phase: phase,
       inputLevel: level,
       message: message
@@ -31,7 +34,9 @@ final class RecordingHUDController: ObservableObject {
     } else {
       panel.contentView = NSHostingView(rootView: view)
     }
-    position(panel)
+    if shouldPosition {
+      position(panel)
+    }
     panel.orderFrontRegardless()
 
     if case .failed = phase {
@@ -53,7 +58,7 @@ final class RecordingHUDController: ObservableObject {
 
   private func makePanel() -> NSPanel {
     let panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 360, height: 104),
+      contentRect: NSRect(x: 0, y: 0, width: 328, height: 72),
       styleMask: [.nonactivatingPanel, .fullSizeContentView],
       backing: .buffered,
       defer: false
@@ -66,6 +71,7 @@ final class RecordingHUDController: ObservableObject {
     panel.backgroundColor = .clear
     panel.isOpaque = false
     panel.hasShadow = true
+    panel.animationBehavior = .utilityWindow
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     panel.titleVisibility = .hidden
     panel.titlebarAppearsTransparent = true
@@ -74,13 +80,17 @@ final class RecordingHUDController: ObservableObject {
   }
 
   private func position(_ panel: NSPanel) {
-    guard let screen = NSScreen.main else {
+    let pointer = NSEvent.mouseLocation
+    guard
+      let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) })
+        ?? NSScreen.main
+    else {
       return
     }
     let visible = screen.visibleFrame
     let origin = NSPoint(
       x: visible.midX - panel.frame.width / 2,
-      y: visible.maxY - panel.frame.height - 24
+      y: visible.minY + 44
     )
     panel.setFrameOrigin(origin)
   }

@@ -8,6 +8,7 @@ node_modules/
 *.log
 outputs/
 dist/
+dist-ios/
 build/
 .pytest_cache/
 .mypy_cache/

@@ -1,12 +1,44 @@
 import MicAICore
 import SwiftUI
 
-private enum OnboardingStep: Int, CaseIterable {
+private enum OnboardingStep: Int, CaseIterable, Identifiable {
   case welcome
   case microphone
   case accessibility
   case speechModel
   case commands
+
+  var id: Self { self }
+
+  var shortTitle: String {
+    switch self {
+    case .welcome:
+      "Overview"
+    case .microphone:
+      "Microphone"
+    case .accessibility:
+      "Accessibility"
+    case .speechModel:
+      "Transcription"
+    case .commands:
+      "AI Commands"
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .welcome:
+      "mic.and.signal.meter.fill"
+    case .microphone:
+      "mic.fill"
+    case .accessibility:
+      "hand.raised.fill"
+    case .speechModel:
+      "waveform"
+    case .commands:
+      "sparkles"
+    }
+  }
 
   var title: String {
     switch self {
@@ -17,7 +49,7 @@ private enum OnboardingStep: Int, CaseIterable {
     case .accessibility:
       "Enable cross-app insertion"
     case .speechModel:
-      "Prepare local transcription"
+      "Choose how dictation is transcribed"
     case .commands:
       "Configure AI Commands"
     }
@@ -27,54 +59,119 @@ private enum OnboardingStep: Int, CaseIterable {
 struct OnboardingView: View {
   @ObservedObject var appModel: AppModel
   @State private var step: OnboardingStep = .welcome
+  @FocusState private var primaryActionFocused: Bool
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
-    VStack(spacing: 0) {
-      HStack(spacing: 6) {
-        ForEach(OnboardingStep.allCases, id: \.rawValue) { item in
-          Capsule()
-            .fill(
-              item.rawValue <= step.rawValue
-                ? Color.accentColor : Color.secondary.opacity(0.18)
-            )
-            .frame(height: 5)
-        }
-      }
-      .padding(24)
+    HStack(spacing: 0) {
+      VStack(alignment: .leading, spacing: 12) {
+        Text("MicAI Setup")
+          .font(.headline)
+          .padding(.horizontal, 12)
+          .padding(.top, 16)
 
-      VStack(alignment: .leading, spacing: 20) {
-        Text(step.title)
-          .font(.largeTitle.weight(.semibold))
-        stepContent
-        Spacer()
+        List(OnboardingStep.allCases, selection: $step) { item in
+          OnboardingStepRow(
+            step: item,
+            status: status(for: item)
+          )
+          .tag(item)
+        }
+        .listStyle(.sidebar)
+
+        Label(
+          "Clear provider boundaries",
+          systemImage: "point.3.connected.trianglepath.dotted"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 16)
       }
-      .padding(.horizontal, 36)
-      .padding(.bottom, 28)
+      .frame(width: 210)
+      .background(.bar)
 
       Divider()
-      HStack {
-        if step != .welcome {
-          Button("Back") {
-            move(by: -1)
+
+      VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
+          HStack {
+            Text("Step \(step.rawValue + 1) of \(OnboardingStep.allCases.count)")
+              .font(.callout)
+              .foregroundStyle(.secondary)
+            Spacer()
+            OnboardingStatusLabel(status: status(for: step))
+          }
+          ProgressView(
+            value: Double(step.rawValue + 1),
+            total: Double(OnboardingStep.allCases.count)
+          )
+          .accessibilityLabel("Setup progress")
+          .accessibilityValue(
+            "Step \(step.rawValue + 1) of \(OnboardingStep.allCases.count)"
+          )
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 18)
+
+        Divider()
+
+        ScrollView {
+          VStack(alignment: .leading, spacing: 20) {
+            Text(step.title)
+              .font(.title.bold())
+            stepContent
+          }
+          .padding(.horizontal, 32)
+          .padding(.vertical, 26)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        Divider()
+        MicAIActionCluster {
+          HStack {
+            Group {
+              if step == .welcome {
+                Button("Back", systemImage: "chevron.left") {}
+                  .hidden()
+              } else {
+                Button("Back", systemImage: "chevron.left") {
+                  move(by: -1)
+                }
+              }
+            }
+            .micAISecondaryButtonStyle()
+
+            Spacer()
+
+            Button(
+              step == .commands ? "Finish for Now" : "Continue",
+              systemImage: step == .commands ? "checkmark" : "chevron.right"
+            ) {
+              if step == .commands {
+                appModel.dismissOnboarding()
+                dismiss()
+              } else {
+                move(by: 1)
+              }
+            }
+            .micAIPrimaryButtonStyle()
+            .keyboardShortcut(.defaultAction)
+            .focused($primaryActionFocused)
           }
         }
-        Spacer()
-        Button(step == .commands ? "Finish for Now" : "Continue") {
-          if step == .commands {
-            appModel.dismissOnboarding()
-            dismiss()
-          } else {
-            move(by: 1)
-          }
-        }
-        .buttonStyle(.borderedProminent)
-        .keyboardShortcut(.defaultAction)
+        .padding(18)
+        .background(.bar)
       }
-      .padding(20)
     }
-    .frame(width: 620, height: 500)
+    .frame(width: 760, height: 560)
     .interactiveDismissDisabled()
+    .onAppear {
+      primaryActionFocused = true
+    }
+    .onChange(of: step) { _, _ in
+      primaryActionFocused = true
+    }
   }
 
   @ViewBuilder
@@ -96,7 +193,7 @@ struct OnboardingView: View {
   private var microphoneStep: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text(
-        "MicAI records only while you invoke a dictation or command hotkey. Ordinary dictation audio never leaves this Mac."
+        "MicAI records only while you invoke a dictation or command hotkey. Ordinary dictation uses your selected provider; AI Command speech stays on this Mac."
       )
       StatusLine(
         title: microphoneStatus,
@@ -150,20 +247,49 @@ struct OnboardingView: View {
   private var speechModelStep: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text(
-        "MicAI uses the Parakeet TDT 0.6b v2 Core ML model. Preparing it can download and compile model files, then all ordinary transcription runs locally."
+        "Choose OpenAI gpt-transcribe for completed recordings or Parakeet for fully on-device transcription. OpenAI API access is not configured yet, so MicAI never sends audio in this build."
       )
-      ModelStatusView(
-        state: appModel.modelState,
-        transcript: nil,
-        prepare: appModel.prepareModel
+      LabeledContent(
+        "Selected provider",
+        value: appModel.dictationSelectedRouteLabel
       )
+      LabeledContent("Effective route") {
+        Text(appModel.dictationEffectiveRouteLabel)
+          .multilineTextAlignment(.trailing)
+      }
+      Label(
+        appModel.dictationProviderStatus.summary,
+        systemImage: appModel.isDictationProviderReady
+          ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
+      )
+      .foregroundStyle(
+        appModel.isDictationProviderReady ? MicAIStatusColor.ready : MicAIStatusColor.attention)
+
+      if appModel.settingsStore.settings.dictationProvider == .parakeet
+        || appModel.settingsStore.settings.openAITranscriptionFallbackEnabled
+      {
+        ModelStatusView(
+          state: appModel.modelState,
+          transcript: nil,
+          prepare: appModel.prepareModel
+        )
+      }
+
+      SettingsLink {
+        Label("Review Transcription Settings", systemImage: "gearshape")
+      }
+      Text(
+        "Preparing Parakeet may download and compile model files. MicAI never starts that download automatically."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
     }
   }
 
   private var commandStep: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text(
-        "AI Commands use your existing Codex CLI sign-in at command time. MicAI treats that credential as read-only and never displays or stores its values."
+        "AI Commands are a personal-use preview that reads your existing Codex CLI sign-in at command time. MicAI never displays, copies, or stores its values."
       )
       LabeledContent(
         "Command hotkey",
@@ -177,6 +303,11 @@ struct OnboardingView: View {
       )
       Text(appModel.providerStatus.summary)
         .foregroundStyle(.secondary)
+      Text(
+        "This personal prototype route is experimental and is not a supported public OpenAI API authentication method."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
       Text(
         "You can finish setup with a blocker. MicAI will continue to show exactly what Dictation or AI Commands still need."
       )
@@ -196,6 +327,63 @@ struct OnboardingView: View {
     }
   }
 
+  private func status(for item: OnboardingStep) -> OnboardingStepStatus {
+    switch item {
+    case .welcome:
+      return OnboardingStepStatus(
+        title: "Overview",
+        systemImage: "info.circle.fill",
+        tint: .secondary
+      )
+    case .microphone:
+      return OnboardingStepStatus(
+        title: appModel.microphonePermission.isGranted ? "Ready" : "Action needed",
+        systemImage: appModel.microphonePermission.isGranted
+          ? "checkmark.circle.fill" : "exclamationmark.circle.fill",
+        tint: appModel.microphonePermission.isGranted
+          ? MicAIStatusColor.ready : MicAIStatusColor.attention
+      )
+    case .accessibility:
+      return OnboardingStepStatus(
+        title: appModel.accessibilityPermission.isTrusted ? "Ready" : "Action needed",
+        systemImage: appModel.accessibilityPermission.isTrusted
+          ? "checkmark.circle.fill" : "exclamationmark.circle.fill",
+        tint: appModel.accessibilityPermission.isTrusted
+          ? MicAIStatusColor.ready : MicAIStatusColor.attention
+      )
+    case .speechModel:
+      if case .preparing = appModel.modelState {
+        return OnboardingStepStatus(
+          title: "Preparing",
+          systemImage: "arrow.down.circle.fill",
+          tint: .accentColor
+        )
+      }
+      if appModel.isDictationProviderReady {
+        return OnboardingStepStatus(
+          title: "Ready",
+          systemImage: "checkmark.circle.fill",
+          tint: MicAIStatusColor.ready
+        )
+      }
+      return OnboardingStepStatus(
+        title: "Action needed",
+        systemImage: "exclamationmark.circle.fill",
+        tint: MicAIStatusColor.attention
+      )
+    case .commands:
+      let settings = appModel.settingsStore.settings
+      let configured =
+        settings.commandHotkey != nil
+        && !settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      return OnboardingStepStatus(
+        title: configured ? "Configured" : "Optional",
+        systemImage: configured ? "checkmark.circle.fill" : "circle.dashed",
+        tint: configured ? MicAIStatusColor.ready : .secondary
+      )
+    }
+  }
+
   private func move(by offset: Int) {
     guard
       let next = OnboardingStep(rawValue: step.rawValue + offset)
@@ -206,11 +394,52 @@ struct OnboardingView: View {
   }
 }
 
+private struct OnboardingStepStatus {
+  let title: String
+  let systemImage: String
+  let tint: Color
+}
+
+private struct OnboardingStepRow: View {
+  let step: OnboardingStep
+  let status: OnboardingStepStatus
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Label(step.shortTitle, systemImage: step.systemImage)
+      Spacer(minLength: 4)
+      Image(systemName: status.systemImage)
+        .foregroundStyle(status.tint)
+        .help(status.title)
+    }
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("\(step.shortTitle): \(status.title)")
+  }
+}
+
+private struct OnboardingStatusLabel: View {
+  let status: OnboardingStepStatus
+
+  var body: some View {
+    Label(status.title, systemImage: status.systemImage)
+      .font(.callout)
+      .foregroundStyle(.secondary)
+      .symbolRenderingMode(.hierarchical)
+      .accessibilityLabel("Current step status: \(status.title)")
+  }
+}
+
 private struct IntroStep: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
+      Image(systemName: "mic.and.signal.meter.fill")
+        .font(.largeTitle)
+        .foregroundStyle(.tint)
+        .padding(16)
+        .background(.tint.opacity(0.12), in: .rect(cornerRadius: 16))
+        .accessibilityHidden(true)
       Label(
-        "Dictate locally in any app",
+        "Choose on-device or OpenAI dictation",
         systemImage: "mic.and.signal.meter.fill"
       )
       Label(
@@ -222,7 +451,7 @@ private struct IntroStep: View {
         systemImage: "escape"
       )
       Text(
-        "Setup covers Microphone, Accessibility, the local speech model, and optional ChatGPT commands."
+        "Setup covers Microphone, Accessibility, transcription routing, the optional local model, and AI Commands."
       )
       .foregroundStyle(.secondary)
     }
@@ -235,10 +464,15 @@ private struct StatusLine: View {
   let ready: Bool
 
   var body: some View {
-    Label(
-      title,
-      systemImage: ready ? "checkmark.circle.fill" : "exclamationmark.circle"
-    )
-    .foregroundStyle(ready ? Color.green : Color.orange)
+    Label {
+      Text(title)
+    } icon: {
+      Image(
+        systemName: ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
+      )
+      .foregroundStyle(ready ? MicAIStatusColor.ready : MicAIStatusColor.attention)
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("\(title): \(ready ? "Ready" : "Needs attention")")
   }
 }

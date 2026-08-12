@@ -11,9 +11,9 @@ public enum ProviderStatus: Sendable, Equatable {
     case .notConfigured:
       "Configure a command hotkey and model."
     case .readyToAttempt:
-      "Codex credential will be checked when a command runs."
+      "Personal preview: local Codex sign-in is checked when a command runs."
     case .retryingCredential:
-      "Reloading the Codex credential after authorization failed."
+      "Reloading the local Codex sign-in after authorization failed."
     case .failed(let error):
       error.localizedDescription
     }

@@ -209,7 +209,9 @@ Work:
 - On 401, reload credentials and retry once only.
 - Build command payloads with separately JSON-encoded instruction and selected text.
 - Route selection to replacement and no selection to insertion.
-- Add an environment-only `OPENAI_API_KEY` fallback adapter, but leave activation explicit until the ChatGPT route is proven incompatible.
+- Keep the environment-only `OPENAI_API_KEY` adapter inactive; selecting a
+  supported public API provider is a separate explicit migration, never an
+  automatic response to private-route failure.
 - Test entirely with fake credentials and an injected HTTP transport.
 
 Files:
@@ -239,7 +241,63 @@ bash scripts/codex-run.sh
 
 Manual gate: with explicit approval to use the real subscription route, select `hello` in TextEdit, speak `make this uppercase`, verify `HELLO` replaces it, then verify an empty-selection draft. Inspect logs and git status for absence of secrets.
 
-Runnable result: both P0 AI Command paths work end to end or the route is classified with a concrete backend incompatibility and the environment fallback can be selected.
+Runnable result: both P0 AI Command paths work end to end or the experimental
+personal route is classified with a concrete backend incompatibility and remains
+disabled pending an explicit supported-provider migration.
+
+## Milestone 6A — Configurable ordinary-dictation providers
+
+Goal: let ordinary dictation choose an inspectable local or hosted transcription
+route without changing the local speech path used by AI Commands.
+
+Work:
+
+- Persist `DictationProvider`, an editable OpenAI transcription model defaulting
+  to `gpt-transcribe`, and an explicit Parakeet fallback preference. Decode older
+  settings as Parakeet for compatibility; store no credential.
+- Snapshot provider/model/fallback at operation start and fence every provider
+  status and result with the current operation ID.
+- Encode completed 16 kHz mono samples as bounded PCM16 WAV and implement the
+  exact multipart `POST /v1/audio/transcriptions` request behind injected API-key
+  and HTTP transport ports. Do not use the Agents SDK or Realtime API.
+- Route to Parakeet by default and on eligible failure only when fallback is
+  enabled. Never fall back after cancellation.
+- Keep the production API-key provider unavailable in this phase. Prove that
+  selecting or saving OpenAI performs no key lookup or network request, and show
+  API access, billing, and first-live-call as unverified in Settings.
+- Add native provider/model/fallback controls plus selected/effective/status
+  rows across Home, onboarding, Dictation, Settings, and the menu-bar menu.
+- Preserve Parakeet as the unconditional local recognizer for AI Command speech.
+
+Files:
+
+- `Sources/MicAICore/ASR/SpeechTranscriptionRequest.swift`
+- `Sources/MicAICore/ASR/DictationProviderStatus.swift`
+- `Sources/MicAICore/ASR/OpenAITranscriptionClient.swift`
+- `Sources/MicAICore/ASR/SpeechTranscriptionRouter.swift`
+- `Sources/MicAICore/Auth/OpenAIAPIKeyProviding.swift`
+- `Sources/MicAICore/Audio/PCM16WAVEncoder.swift`
+- `Sources/MicAICore/Operation/DictationPipeline.swift`
+- `Sources/MicAICore/Settings/AppSettings.swift`
+- `Sources/MicAI/AppModel.swift`
+- Existing native views and focused core/app test files
+
+Verification:
+
+```bash
+bash scripts/codex-test.sh
+bash scripts/codex-typecheck.sh
+bash scripts/codex-lint.sh
+bash scripts/codex-build.sh
+```
+
+Manual gate: do not add or inspect a key, verify billing, use Keychain, record
+audio, or make the first live transcription in this milestone. Those actions
+require a separate approved security and privacy run.
+
+Runnable result: Parakeet remains usable offline; OpenAI `gpt-transcribe` is a
+fully modeled and fake-transport-tested choice whose unavailable live state is
+truthful and non-networking.
 
 ## Milestone 7 — Complete menu bar UX, HUD, onboarding, Settings, and launch at login
 
@@ -249,8 +307,10 @@ Work:
 
 - Finish `MenuBarExtra` content, Settings scene, and first-run onboarding.
 - Implement a floating nonactivating HUD for recording level, transcribing, awaiting LLM, inserting, failure, and cancellation.
-- Show separate microphone, Accessibility, ASR model, and LLM provider status.
-- Add hotkey capture/validation, dictation-mode control, LLM model string, and launch-at-login.
+- Show separate microphone, Accessibility, ordinary-dictation route, local ASR
+  model, and AI Command provider status.
+- Add hotkey capture/validation, dictation-mode control, transcription
+  provider/model/fallback, LLM model string, and launch-at-login.
 - Implement `SMAppService.mainApp` registration/unregistration and status mapping.
 - Ensure normal HUD/menu interaction does not steal focus from the insertion target.
 
@@ -289,6 +349,13 @@ Goal: make the prototype dependable enough for the final acceptance run.
 Work:
 
 - Exercise permission denial/recovery, model offline/failure, missing/malformed auth, 401 retry, 403/429/5xx, broken SSE, focus changes, hotkey conflicts, and cancellation races.
+- Convert captured audio through FluidAudio's AVAudioConverter-backed path, cap
+  recordings at 120 seconds, and finish automatically when the cap is reached.
+- Preserve completed output after insertion failure with explicit exact-target
+  retry, clipboard copy, and dismissal actions.
+- Treat the Codex subscription route as an experimental personal integration;
+  never activate the API-key adapter automatically.
+- Emit local unified-log events using stable redacted codes and durations only.
 - Measure capture-to-ASR and release-to-insertion timing locally.
 - Warm the loaded ASR manager and remove avoidable main-thread work until the 10-second utterance target is met.
 - Audit source, fixtures, logs, app bundle, and git status for credentials, audio, and build artifacts.
@@ -296,8 +363,10 @@ Work:
 
 Files:
 
-- `Sources/MicAICore/Diagnostics/LocalMetrics.swift`
-- `Sources/MicAI/Diagnostics/RedactedLogger.swift`
+- `Sources/MicAICore/Audio/AVAudioEngineCapture.swift`
+- `Sources/MicAI/Recovery/RecoverableInsertion.swift`
+- `Sources/MicAI/Views/RecoveryResultView.swift`
+- `Sources/MicAI/Diagnostics/MicAITelemetry.swift`
 - Existing implementation files as targeted fixes require
 - Existing `Tests/MicAICoreTests/*` as coverage requires
 
@@ -348,6 +417,52 @@ git status --short
 ```
 
 Done when every row in the table has recorded pass evidence and no unresolved P0 defect remains.
+
+## Milestone 10 — Proof-carrying cross-platform command review
+
+Status: implemented as a narrow vertical slice on 2026-08-11. This milestone does
+not authorize live microphone, provider, TCC, target-app, keyboard-extension, or
+installation testing.
+
+Goal: make AI transformations reviewable and recoverable before cross-app paste, then
+prove the same core receipt can render in macOS and iOS SwiftUI.
+
+Implemented work:
+
+- `MicAICore/Proof/ProofCarryingDraft.swift` provides immutable on-device,
+  network, and target-lock receipt steps.
+- `AppModel`, the command pipeline, and macOS proof views stage an AI command as a
+  pending draft; approval is target-locked and failed reactivation preserves it.
+- `MicAIiOS` reuses the shared receipt with deterministic primary, approved,
+  target-unavailable, and narrow/accessibility fixtures.
+- Manual iOS Simulator bundle/run scripts avoid `xcodebuild` and build only the
+  fixture-backed shared core surface.
+
+Files:
+
+- `Sources/MicAICore/Proof/ProofCarryingDraft.swift`
+- `Sources/MicAI/Recovery/PendingProofDraft.swift`
+- `Sources/MicAI/Views/ProofDraftView.swift`
+- `Sources/MicAIiOS/MicAIiOSApp.swift`
+- `Sources/MicAIiOS/IOSUIEvidenceReporter.swift`
+- `Tests/MicAICoreTests/ProofCarryingDraftTests.swift`
+- `scripts/codex-build-ios-sim.sh`
+- `scripts/codex-run-ios-sim.sh`
+
+Verification:
+
+```bash
+bash scripts/codex-test.sh
+bash scripts/codex-typecheck.sh
+bash scripts/codex-build.sh
+bash scripts/codex-build-ios-sim.sh
+```
+
+Evidence gate: build/install/launch each iOS fixture in an already booted Simulator;
+capture primary, target-unavailable, approved, and accessibility-size screenshots plus
+hierarchy evidence. Exercise the macOS review UI with Computer Use without accepting
+TCC prompts or changing a target application. A real command, target reactivation,
+or live provider call remains an explicit approval-gated acceptance step.
 
 ## Open questions
 

@@ -36,12 +36,13 @@ struct CommandEngineTests {
   func forwardsInstructionSelectionModelAndSessionToTransformer() async throws {
     let sessionID = UUID()
     let transformer = FakeTransformer(output: "done")
-    let engine = CommandEngine(transformer: transformer, makeSessionID: { sessionID })
+    let engine = CommandEngine(transformer: transformer)
 
     _ = try await engine.execute(
       instruction: "translate",
       selectedText: "bonjour",
-      model: "gpt-5-codex"
+      model: "gpt-5-codex",
+      requestID: sessionID
     )
 
     let request = try #require(await transformer.lastRequest)
@@ -57,7 +58,11 @@ struct CommandEngineTests {
     let engine = CommandEngine(transformer: transformer)
 
     await expectFailure(is: .asrFailed) {
-      try await engine.execute(instruction: "   ", selectedText: "hello", model: "gpt-5-codex")
+      try await engine.execute(
+        instruction: "   ",
+        selectedText: "hello",
+        model: "gpt-5-codex"
+      )
     }
     #expect(await transformer.callCount == 0)
   }
@@ -67,7 +72,11 @@ struct CommandEngineTests {
     let engine = CommandEngine(transformer: FakeTransformer(output: "ignored"))
 
     await expectFailure(is: .llmServerFailure) {
-      try await engine.execute(instruction: "do it", selectedText: nil, model: "  ")
+      try await engine.execute(
+        instruction: "do it",
+        selectedText: nil,
+        model: "  "
+      )
     }
   }
 
@@ -76,7 +85,11 @@ struct CommandEngineTests {
     let engine = CommandEngine(transformer: FakeTransformer(output: "   "))
 
     await expectFailure(is: .llmIncomplete) {
-      try await engine.execute(instruction: "do it", selectedText: nil, model: "gpt-5-codex")
+      try await engine.execute(
+        instruction: "do it",
+        selectedText: nil,
+        model: "gpt-5-codex"
+      )
     }
   }
 

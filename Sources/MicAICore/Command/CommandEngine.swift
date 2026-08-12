@@ -6,6 +6,28 @@ public protocol CommandExecuting: Sendable {
     selectedText: String?,
     model: String
   ) async throws -> InsertionIntent
+
+  func execute(
+    instruction: String,
+    selectedText: String?,
+    model: String,
+    requestID: UUID
+  ) async throws -> InsertionIntent
+}
+
+extension CommandExecuting {
+  public func execute(
+    instruction: String,
+    selectedText: String?,
+    model: String,
+    requestID: UUID
+  ) async throws -> InsertionIntent {
+    try await execute(
+      instruction: instruction,
+      selectedText: selectedText,
+      model: model
+    )
+  }
 }
 
 public struct CommandEngine: CommandExecuting, Sendable {
@@ -14,7 +36,7 @@ public struct CommandEngine: CommandExecuting, Sendable {
 
   public init(
     transformer: any LLMTransforming,
-    makeSessionID: @escaping @Sendable () -> UUID = UUID.init
+    makeSessionID: @escaping @Sendable () -> UUID = { UUID() }
   ) {
     self.transformer = transformer
     self.makeSessionID = makeSessionID
@@ -24,6 +46,20 @@ public struct CommandEngine: CommandExecuting, Sendable {
     instruction: String,
     selectedText: String?,
     model: String
+  ) async throws -> InsertionIntent {
+    try await execute(
+      instruction: instruction,
+      selectedText: selectedText,
+      model: model,
+      requestID: makeSessionID()
+    )
+  }
+
+  public func execute(
+    instruction: String,
+    selectedText: String?,
+    model: String,
+    requestID: UUID
   ) async throws -> InsertionIntent {
     guard !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw MicAIError.asrFailed
@@ -37,7 +73,7 @@ public struct CommandEngine: CommandExecuting, Sendable {
         instruction: instruction,
         selectedText: selectedText,
         model: model,
-        sessionID: makeSessionID()
+        sessionID: requestID
       )
     )
     guard !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

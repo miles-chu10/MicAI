@@ -38,7 +38,7 @@ public actor ChatGPTResponsesClient: LLMTransforming {
   private let credentialLoader: any CredentialLoading
   private let transport: any ResponsesHTTPTransport
   private let requestTimeout: TimeInterval
-  private let statusHandler: @Sendable (ProviderStatus) -> Void
+  private let statusHandler: @Sendable (UUID, ProviderStatus) -> Void
   private var cachedCredential: ChatGPTCredential?
 
   public init(
@@ -50,7 +50,21 @@ public actor ChatGPTResponsesClient: LLMTransforming {
     self.credentialLoader = credentialLoader
     self.transport = transport
     self.requestTimeout = requestTimeout
-    self.statusHandler = statusHandler
+    self.statusHandler = { _, status in
+      statusHandler(status)
+    }
+  }
+
+  public init(
+    credentialLoader: any CredentialLoading = CodexAuthFileLoader(),
+    transport: any ResponsesHTTPTransport = URLSessionResponsesTransport(),
+    requestTimeout: TimeInterval = ChatGPTResponsesClient.defaultRequestTimeout,
+    scopedStatusHandler: @escaping @Sendable (UUID, ProviderStatus) -> Void
+  ) {
+    self.credentialLoader = credentialLoader
+    self.transport = transport
+    self.requestTimeout = requestTimeout
+    self.statusHandler = scopedStatusHandler
   }
 
   public func transform(_ request: LLMRequest) async throws -> String {
@@ -61,11 +75,11 @@ public actor ChatGPTResponsesClient: LLMTransforming {
 
       guard firstResponse.statusCode == 401 else {
         let output = try await parse(firstResponse)
-        statusHandler(.readyToAttempt)
+        statusHandler(request.sessionID, .readyToAttempt)
         return output
       }
 
-      statusHandler(.retryingCredential)
+      statusHandler(request.sessionID, .retryingCredential)
       cachedCredential = nil
       let reloadedCredential = try loadCredential()
       let retryResponse = try await perform(request, credential: reloadedCredential)
@@ -73,14 +87,14 @@ public actor ChatGPTResponsesClient: LLMTransforming {
         throw MicAIError.llmUnauthorized
       }
       let output = try await parse(retryResponse)
-      statusHandler(.readyToAttempt)
+      statusHandler(request.sessionID, .readyToAttempt)
       return output
     } catch is CancellationError {
       let error = MicAIError.cancelled
-      statusHandler(.failed(error))
+      statusHandler(request.sessionID, .failed(error))
       throw error
     } catch let error as MicAIError {
-      statusHandler(.failed(error))
+      statusHandler(request.sessionID, .failed(error))
       throw error
     }
   }

@@ -97,6 +97,29 @@ struct TextInsertionCoordinatorTests {
   }
 
   @Test
+  func copyResultIntentionallyReplacesClipboardWithoutPasting() async throws {
+    let pasteboard = FakePasteboard(
+      items: [["public.utf8-plain-text": Data("original".utf8)]]
+    )
+    let keyboard = FakeKeyboard()
+    let coordinator = makeCoordinator(
+      pasteboard: pasteboard,
+      keyboard: keyboard,
+      validator: FakeTargetValidator(responses: [])
+    )
+
+    try await coordinator.copyResult("recovered result")
+
+    #expect(pasteboard.writtenTexts == ["recovered result"])
+    #expect(
+      pasteboard.items
+        == [["public.utf8-plain-text": Data("recovered result".utf8)]]
+    )
+    #expect(pasteboard.restoreCount == 0)
+    #expect(keyboard.pasteCount == 0)
+  }
+
+  @Test
   func failedPasteRestoresOriginalClipboardOnce() async throws {
     let originalItems = [["public.utf8-plain-text": Data("original".utf8)]]
     let pasteboard = FakePasteboard(items: originalItems)
@@ -115,6 +138,33 @@ struct TextInsertionCoordinatorTests {
     }
     #expect(pasteboard.items == originalItems)
     #expect(pasteboard.restoreCount == 1)
+  }
+
+  @Test
+  func failedRestoreAfterPasteReportsUncertainCompletionWithoutAnotherPaste() async throws {
+    let pasteboard = FakePasteboard(
+      items: [["public.utf8-plain-text": Data("original".utf8)]],
+      restoreError: .insertionFailed
+    )
+    let keyboard = FakeKeyboard()
+    let coordinator = makeCoordinator(
+      pasteboard: pasteboard,
+      keyboard: keyboard,
+      validator: FakeTargetValidator(responses: [true, true])
+    )
+
+    do {
+      try await coordinator.apply(.insert("dictated text"), to: target)
+      Issue.record("Expected uncertain post-paste completion")
+    } catch {
+      #expect(
+        error as? MicAIError == .clipboardRestoreFailedAfterInsertion
+      )
+    }
+
+    #expect(keyboard.pasteCount == 1)
+    #expect(pasteboard.writtenTexts == ["dictated text"])
+    #expect(pasteboard.restoreCount == 0)
   }
 
   @Test

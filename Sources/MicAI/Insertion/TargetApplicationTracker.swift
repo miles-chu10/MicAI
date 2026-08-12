@@ -5,7 +5,7 @@ import MicAICore
 actor TargetApplicationTracker: TargetValidating {
   private struct FocusSnapshot: @unchecked Sendable {
     let element: AXUIElement
-    let selectedRange: CFRange
+    let selectedRange: CFRange?
   }
 
   private var focusSnapshots: [UUID: FocusSnapshot] = [:]
@@ -52,8 +52,37 @@ actor TargetApplicationTracker: TargetValidating {
     else {
       return false
     }
-    return expected.selectedRange.location == current.selectedRange.location
-      && expected.selectedRange.length == current.selectedRange.length
+    guard let expectedRange = expected.selectedRange else {
+      return true
+    }
+    guard let currentRange = current.selectedRange else {
+      return false
+    }
+    return expectedRange.location == currentRange.location
+      && expectedRange.length == currentRange.length
+  }
+
+  func reactivate(_ target: TargetIdentity) async -> Bool {
+    guard let focusToken = target.focusToken,
+      focusSnapshots[focusToken] != nil
+    else {
+      return false
+    }
+    let activated = await MainActor.run {
+      guard
+        let application = NSRunningApplication(
+          processIdentifier: target.processIdentifier
+        )
+      else {
+        return false
+      }
+      return application.activate(options: [])
+    }
+    guard activated else {
+      return false
+    }
+    try? await Task.sleep(for: .milliseconds(180))
+    return await isCurrent(target)
   }
 
   func release(_ target: TargetIdentity) {
@@ -81,6 +110,15 @@ actor TargetApplicationTracker: TargetValidating {
     }
 
     let focusedElement = focusedValue as! AXUIElement
+    return FocusSnapshot(
+      element: focusedElement,
+      selectedRange: captureSelectedRange(from: focusedElement)
+    )
+  }
+
+  private nonisolated static func captureSelectedRange(
+    from focusedElement: AXUIElement
+  ) -> CFRange? {
     var selectedRangeValue: CFTypeRef?
     guard
       AXUIElementCopyAttributeValue(
@@ -100,10 +138,6 @@ actor TargetApplicationTracker: TargetValidating {
     else {
       return nil
     }
-
-    return FocusSnapshot(
-      element: focusedElement,
-      selectedRange: selectedRange
-    )
+    return selectedRange
   }
 }
