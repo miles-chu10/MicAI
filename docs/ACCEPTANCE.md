@@ -187,6 +187,8 @@ Swift 6.4:
 - `bash scripts/codex-lint.sh`: PASS — strict format lint exited zero.
 - `bash scripts/codex-build.sh`: PASS — release compilation completed and
   assembled/ad-hoc-signed `dist/MicAI.app`.
+- `bash scripts/codex-install-safety-test.sh`: PASS — the complete temporary-root
+  adversarial installer harness exited zero.
 - Shell syntax for all tracked scripts and `git diff --check`: PASS.
 
 Provider coverage includes legacy Parakeet migration, editable OpenAI model
@@ -201,6 +203,11 @@ Post-build checks also passed:
   `LSUIElement=true`, microphone usage text, and macOS 14 minimum.
 - Thin arm64 Mach-O with `LC_BUILD_VERSION` minimum macOS 14.0.
 - `codesign --verify --deep --strict`; signature reports `adhoc`.
+- `bash scripts/codex-install.sh --plan`; source validation passed and the
+  command reported its operation as read-only with no files changed. The
+  installed target's full manifest, stat identities, executable/plist hashes,
+  signature, and missing-icon state were byte-for-byte identical before and
+  after the plan.
 - `.build/` and `dist/` ignore rules plus current git status review.
 - Stable bundle identifier `com.mileschu.micai`, `LSUIElement=true`, and no
   credential/content fields in the new recovery or telemetry surfaces.

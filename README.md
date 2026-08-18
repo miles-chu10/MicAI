@@ -41,9 +41,19 @@ open source.
 
 ```bash
 bash scripts/codex-build.sh
+bash scripts/codex-install.sh --plan
 bash scripts/codex-run.sh
 ```
 
+The build command creates and validates the ad-hoc-signed `dist/MicAI.app`,
+including its `MicAI.icns` resource and `CFBundleIconFile` metadata. The install
+command is read-only by default: it compares that artifact with the current
+Applications copy and prints the exact target, backup path, rollback behavior,
+and separately gated `--apply` command. Run that printed command only after
+explicitly approving the persistent replacement it describes. Apply acquires
+one atomic per-target lock, rechecks both bundles immediately before
+replacement, and verifies any rollback against the reviewed original target
+state.
 
 ## Common Commands
 

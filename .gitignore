@@ -20,3 +20,6 @@ build/
 .swiftpm-security/
 .research/
 *.xcodeproj
+.cursor/hooks/state/
+.cursor/settings.json
+.vscode/launch.json
