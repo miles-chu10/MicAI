@@ -180,12 +180,13 @@ final class AppModel: ObservableObject {
 
   func applySettings() {
     hotkeyMonitor.update(settings: settingsStore.settings)
-    commandPipeline.updateTransformer(
-      Self.makeTransformer(
-        for: settingsStore.settings.llmProvider,
-        statusHandler: providerStatusRelay.send
-      )
+    let transformer = Self.makeTransformer(
+      for: settingsStore.settings.llmProvider,
+      statusHandler: providerStatusRelay.send
     )
+    Task {
+      await commandPipeline.updateTransformer(transformer)
+    }
     refreshProviderStatus()
   }
 
