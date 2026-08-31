@@ -72,29 +72,79 @@ extension AppSettingsValidationError: LocalizedError {
   }
 }
 
+public enum LLMProvider: String, Codable, CaseIterable, Sendable {
+  case openAIAPIKey
+  case chatGPTSubscription
+
+  public var displayName: String {
+    switch self {
+    case .openAIAPIKey:
+      "OpenAI API key"
+    case .chatGPTSubscription:
+      "ChatGPT subscription"
+    }
+  }
+
+  public var modelFieldLabel: String {
+    switch self {
+    case .openAIAPIKey:
+      "OpenAI model"
+    case .chatGPTSubscription:
+      "ChatGPT model"
+    }
+  }
+
+  public var modelPlaceholder: String {
+    switch self {
+    case .openAIAPIKey:
+      "Enter an OpenAI API model, e.g. gpt-5.4"
+    case .chatGPTSubscription:
+      "Enter a supported subscription model"
+    }
+  }
+}
+
 public struct AppSettings: Codable, Equatable, Sendable {
   public static let defaults = AppSettings(
     dictationHotkey: .rightOption,
     commandHotkey: nil,
     dictationActivationMode: .hold,
+    llmProvider: .openAIAPIKey,
     llmModel: ""
   )
 
   public var dictationHotkey: Hotkey
   public var commandHotkey: Hotkey?
   public var dictationActivationMode: DictationActivationMode
+  public var llmProvider: LLMProvider
   public var llmModel: String
 
   public init(
     dictationHotkey: Hotkey,
     commandHotkey: Hotkey?,
     dictationActivationMode: DictationActivationMode,
+    llmProvider: LLMProvider = .openAIAPIKey,
     llmModel: String
   ) {
     self.dictationHotkey = dictationHotkey
     self.commandHotkey = commandHotkey
     self.dictationActivationMode = dictationActivationMode
+    self.llmProvider = llmProvider
     self.llmModel = llmModel
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    dictationHotkey = try container.decode(Hotkey.self, forKey: .dictationHotkey)
+    commandHotkey = try container.decodeIfPresent(Hotkey.self, forKey: .commandHotkey)
+    dictationActivationMode = try container.decode(
+      DictationActivationMode.self,
+      forKey: .dictationActivationMode
+    )
+    llmProvider =
+      try container.decodeIfPresent(LLMProvider.self, forKey: .llmProvider)
+      ?? .openAIAPIKey
+    llmModel = try container.decode(String.self, forKey: .llmModel)
   }
 
   public func validated() throws -> AppSettings {

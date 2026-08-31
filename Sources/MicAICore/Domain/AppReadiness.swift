@@ -17,7 +17,7 @@ public enum ReadinessBlocker: String, Sendable, Equatable, CaseIterable {
     case .commandHotkey:
       "Choose an AI Command hotkey."
     case .languageModel:
-      "Enter the ChatGPT model used for commands."
+      "Enter the model used for commands."
     case .activeOperation:
       "Wait for the current operation to finish."
     }

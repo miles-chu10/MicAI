@@ -1,6 +1,6 @@
 # MicAI
 
-Local-first AI dictation and AI-commands app for macOS: Parakeet TDT v2 on-device ASR + ChatGPT-subscription OAuth as LLM provider
+Local-first AI dictation and AI-commands app for macOS: Parakeet TDT v2 on-device ASR + a selectable OpenAI LLM provider (API key by default; ChatGPT-subscription OAuth optional)
 
 ## Setup
 

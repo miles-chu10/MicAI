@@ -53,7 +53,7 @@ extension MicAIError: LocalizedError {
     case .asrFailed:
       "Speech recognition failed."
     case .credentialMissing:
-      "Sign in with Codex before using AI Commands."
+      "The selected AI Commands provider is missing its credential: set an OPENAI_API_KEY environment variable for the OpenAI API key provider, or sign in with Codex for the ChatGPT subscription provider."
     case .credentialMalformed:
       "The Codex credential file could not be read."
     case .llmUnauthorized:

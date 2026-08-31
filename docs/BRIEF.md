@@ -41,22 +41,29 @@ Audio: AVAudioEngine, 16 kHz mono Float32. IMPORTANT: verify FluidAudio's actual
 public API from the resolved package sources under `.build/checkouts/` before writing
 the spec's integration section — do not invent method names.
 
-LLM (AI Commands + optional dictation post-processing): the user's ChatGPT
-subscription via OAuth, not a metered API key.
-- Reuse the Codex CLI credential at `~/.codex/auth.json` (fields include
-  `tokens.access_token`, `tokens.account_id`, `tokens.refresh_token`). The Codex CLI
-  keeps it refreshed; MicAI re-reads the file on each session and on a 401 re-reads
-  once before surfacing an error. Do NOT implement an OAuth browser flow in the
-  prototype; document it as P1.
-- Endpoint: `https://chatgpt.com/backend-api/codex/responses` (Responses API shape,
-  streaming SSE), headers `Authorization: Bearer <access_token>`,
+LLM (AI Commands + optional dictation post-processing): the user chooses the
+provider in Settings. The default provider uses the standard OpenAI API with an
+`OPENAI_API_KEY` read from the process environment (never written to disk). An
+optional "ChatGPT subscription" provider reuses the Codex CLI OAuth credential at
+`~/.codex/auth.json`.
+- OpenAI API-key provider (default): endpoint
+  `https://api.openai.com/v1/responses` (Responses API shape, streaming SSE) with a
+  bearer `Authorization` header. The key comes from `OPENAI_API_KEY` in the
+  environment only; MicAI never stores it.
+- ChatGPT-subscription provider (optional): reuse the Codex CLI credential at
+  `~/.codex/auth.json` (fields include `tokens.access_token`, `tokens.account_id`,
+  `tokens.refresh_token`). The Codex CLI keeps it refreshed; MicAI re-reads the file
+  on each session and on a 401 re-reads once before surfacing an error. Do NOT
+  implement an OAuth browser flow in the prototype; document it as P1.
+- Subscription endpoint: `https://chatgpt.com/backend-api/codex/responses`
+  (Responses API shape, streaming SSE), headers `Authorization: ******`,
   `chatgpt-account-id: <account_id>`, `OpenAI-Beta: responses=experimental`,
-  `originator: codex_cli_rs`, plus a random `session_id` UUID. Verify the exact
-  request shape against the installed codex-cli 0.144.6 (open source) rather than
-  guessing; if the endpoint proves unusable from a third-party app, fall back to
-  `OPENAI_API_KEY` from the environment (never written to disk) and record the
-  finding in SPEC.md.
-- Default model: the subscription's default GPT model; make it a settings string.
+  `originator: codex_cli_rs`, plus a random `session_id` UUID. The exact request
+  shape was verified against codex-cli 0.144.6 (open source); see SPEC.md for the
+  verified contract.
+- Default model: a settings string; for the API-key provider a standard OpenAI
+  model (for example `gpt-5.4`), for the subscription provider the subscription's
+  default GPT model.
 
 ## Hard constraints (verified on this machine, 2026-07-21)
 
@@ -91,7 +98,8 @@ subscription via OAuth, not a metered API key.
    and inserts the text into TextEdit (or any focused text field) within ~2s for a
    10s utterance.
 4. With text selected, the command hotkey + "make this uppercase" (spoken) replaces
-   the selection with the LLM result using ChatGPT-subscription OAuth.
+   the selection with the LLM result using the configured provider (OpenAI API key
+   by default; ChatGPT-subscription OAuth when selected).
 5. Esc cancels a recording without inserting anything.
 6. `bash scripts/codex-test.sh` runs green unit tests for MicAICore (command routing,
    auth.json parsing, clipboard-restore logic with injected pasteboard).

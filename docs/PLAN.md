@@ -197,9 +197,9 @@ Manual gate: in TextEdit, dictate through hold and toggle modes; verify rich/mul
 
 Runnable result: local dictation works end to end in any compatible focused text field.
 
-## Milestone 6 — ChatGPT-subscription SSE client and AI Commands
+## Milestone 6 — LLM provider clients (OpenAI API key default, ChatGPT subscription opt-in) and AI Commands
 
-Goal: transform a selection or draft text in place using the verified Codex 0.144.6 HTTP contract.
+Goal: transform a selection or draft text in place using the configured provider. The default provider posts to the standard OpenAI API; an opt-in provider uses the verified Codex 0.144.6 HTTP contract.
 
 Work:
 
@@ -209,7 +209,7 @@ Work:
 - On 401, reload credentials and retry once only.
 - Build command payloads with separately JSON-encoded instruction and selected text.
 - Route selection to replacement and no selection to insertion.
-- Add an environment-only `OPENAI_API_KEY` fallback adapter, but leave activation explicit until the ChatGPT route is proven incompatible.
+- Add an environment-only `OPENAI_API_KEY` client for the standard OpenAI API and make the provider a user-facing Settings choice (default: OpenAI API key).
 - Test entirely with fake credentials and an injected HTTP transport.
 
 Files:
@@ -237,9 +237,9 @@ bash scripts/codex-build.sh
 bash scripts/codex-run.sh
 ```
 
-Manual gate: with explicit approval to use the real subscription route, select `hello` in TextEdit, speak `make this uppercase`, verify `HELLO` replaces it, then verify an empty-selection draft. Inspect logs and git status for absence of secrets.
+Manual gate: with explicit approval, select `hello` in TextEdit, speak `make this uppercase`, verify `HELLO` replaces it with the configured provider (OpenAI API key by default), then verify an empty-selection draft. Repeat with the opt-in ChatGPT-subscription provider only with separate approval. Inspect logs and git status for absence of secrets.
 
-Runnable result: both P0 AI Command paths work end to end or the route is classified with a concrete backend incompatibility and the environment fallback can be selected.
+Runnable result: both P0 AI Command provider paths work end to end, with the OpenAI API-key provider as the default.
 
 ## Milestone 7 — Complete menu bar UX, HUD, onboarding, Settings, and launch at login
 
@@ -330,7 +330,7 @@ Files:
 | 1. Clean-clone build produces `dist/MicAI.app` | In a clean checkout with network: `bash scripts/codex-build.sh`, `test -d dist/MicAI.app`, `codesign --verify --deep --strict dist/MicAI.app` | Command outputs, resolved dependency version, bundle tree, signature verification |
 | 2. Launch shows menu icon and onboarding requests/explains permissions | `bash scripts/codex-run.sh`; complete first-run flow from not-determined microphone state and untrusted Accessibility state where practical | Menu/no-Dock observation plus each onboarding state recorded |
 | 3. Hold dictation inserts a 10-second utterance in about two seconds | In TextEdit, hold Right Option, speak the fixed 10-second phrase, release, compare text, record release-to-insertion time; repeat five times | Five outputs and timings; median and worst case |
-| 4. Selected-text uppercase command replaces via ChatGPT OAuth | Select `hello`, invoke command hotkey, speak `make this uppercase`, verify `HELLO`; confirm provider reports ChatGPT credential path without exposing it | Five replacements, HTTP status/event completion diagnostics with all sensitive fields redacted |
+| 4. Selected-text uppercase command replaces via the configured provider | Select `hello`, invoke command hotkey, speak `make this uppercase`, verify `HELLO`; confirm the provider reports its credential path (OpenAI API key by default, ChatGPT subscription when selected) without exposing it | Five replacements, HTTP status/event completion diagnostics with all sensitive fields redacted |
 | 5. Esc cancels without insertion | Cancel once during recording, ASR, and LLM wait | Target text and clipboard unchanged after each case |
 | 6. MicAICore unit tests are green for routing, auth parsing, and clipboard restore | `bash scripts/codex-test.sh` | Green test report naming the required suites |
 | 7. No secrets or build artifacts are tracked | `git status --short` plus a secret-name-only scan of tracked files; verify `dist/` and `.build/` are ignored | No credential values; `git check-ignore dist .build` succeeds; only intended source/docs changes appear |

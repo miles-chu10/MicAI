@@ -11,6 +11,7 @@ struct AppSettingsTests {
     #expect(settings.dictationHotkey == .rightOption)
     #expect(settings.dictationActivationMode == .hold)
     #expect(settings.commandHotkey == nil)
+    #expect(settings.llmProvider == .openAIAPIKey)
     #expect(settings.llmModel == "")
   }
 
@@ -102,6 +103,7 @@ struct AppSettingsTests {
       dictationHotkey: .rightOption,
       commandHotkey: Hotkey(keyCode: 49, modifiers: [.command]),
       dictationActivationMode: .toggle,
+      llmProvider: .chatGPTSubscription,
       llmModel: "gpt-test"
     )
 
@@ -116,9 +118,51 @@ struct AppSettingsTests {
           "dictationHotkey",
           "commandHotkey",
           "dictationActivationMode",
+          "llmProvider",
           "llmModel",
         ]
     )
+    #expect(object["llmProvider"] as? String == "chatGPTSubscription")
     #expect(try JSONDecoder().decode(AppSettings.self, from: data) == settings)
+  }
+
+  @Test
+  func decodingSettingsWithoutProviderDefaultsToOpenAIAPIKey() throws {
+    let legacy = """
+      {
+        "dictationHotkey": {"keyCode": 61, "modifiers": []},
+        "commandHotkey": null,
+        "dictationActivationMode": "hold",
+        "llmModel": "gpt-test"
+      }
+      """
+
+    let settings = try JSONDecoder().decode(
+      AppSettings.self,
+      from: Data(legacy.utf8)
+    )
+
+    #expect(settings.llmProvider == .openAIAPIKey)
+    #expect(settings.llmModel == "gpt-test")
+  }
+
+  @Test
+  func providerSummariesMatchTheSelectedProvider() {
+    #expect(
+      ProviderStatus.readyToAttempt.summary(for: .openAIAPIKey)
+        == "The OPENAI_API_KEY environment variable will be checked when a command runs."
+    )
+    #expect(
+      ProviderStatus.readyToAttempt.summary(for: .chatGPTSubscription)
+        == "Codex credential will be checked when a command runs."
+    )
+    #expect(
+      ProviderStatus.retryingCredential.summary(for: .openAIAPIKey)
+        == "Rechecking authorization with the OpenAI API."
+    )
+    #expect(
+      ProviderStatus.retryingCredential.summary(for: .chatGPTSubscription)
+        == "Reloading the Codex credential after authorization failed."
+    )
   }
 }

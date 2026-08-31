@@ -2,7 +2,7 @@
 
 ## Product summary
 
-MicAI is a local-first macOS menu bar app for fast voice input. Holding or toggling a global dictation hotkey records speech, transcribes it on-device with Parakeet TDT 0.6b v2, lightly cleans the transcript, and pastes it at the active cursor. A separate command hotkey combines a spoken instruction with the current selection and uses the user's ChatGPT subscription to replace or insert text.
+MicAI is a local-first macOS menu bar app for fast voice input. Holding or toggling a global dictation hotkey records speech, transcribes it on-device with Parakeet TDT 0.6b v2, lightly cleans the transcript, and pastes it at the active cursor. A separate command hotkey combines a spoken instruction with the current selection and uses the configured OpenAI model to replace or insert text. The default provider is the standard OpenAI API with an `OPENAI_API_KEY` environment variable; a ChatGPT-subscription provider (Codex CLI OAuth) is available as an opt-in.
 
 The P0 product is a functional local prototype for macOS 14 or later. It is not a general voice assistant, a meeting recorder, or a cross-platform product.
 
@@ -12,7 +12,7 @@ The P0 product is a functional local prototype for macOS 14 or later. It is not 
 2. The active app stays the work surface. Users should not have to move text through a MicAI editor.
 3. State is visible and cancellation is safe. Recording, transcription, insertion, and failures are explicit; Esc never inserts partial work.
 4. AI is deliberate. Only AI Commands, and optional explicitly enabled post-processing, send text to an LLM.
-5. Local prototype operation must not require Xcode, an API-key subscription, or a separate OAuth login.
+5. Local prototype operation must not require Xcode or a separate OAuth login; the default LLM provider only needs an `OPENAI_API_KEY` environment variable.
 
 ## Personas
 
@@ -101,7 +101,7 @@ Acceptance criteria:
 - The spoken instruction is transcribed locally.
 - The instruction and selected text, but not raw audio, are sent to the configured LLM.
 - `make this uppercase` replaces the selected text with the returned transformation.
-- The client uses the read-only Codex credential when available, re-reads it once after a 401, and never writes or logs token values.
+- With the default provider, the client uses the `OPENAI_API_KEY` environment variable and never persists or logs it; the opt-in ChatGPT-subscription provider uses the read-only Codex credential, re-reads it once after a 401, and never writes or logs token values.
 - Empty, failed, cancelled, or incomplete LLM output does not replace the selection.
 
 ### US-5: Draft with an AI Command when nothing is selected
@@ -167,7 +167,7 @@ Acceptance criteria:
 - 100% success for `bash scripts/codex-build.sh` on a clean supported clone with network access, producing a verifiable ad-hoc-signed `dist/MicAI.app`.
 - All `bash scripts/codex-test.sh` MicAICore tests pass, including command routing, auth parsing, cancellation, SSE parsing, and guarded clipboard restoration.
 - Five consecutive 10-second TextEdit dictations complete without crash or clipboard loss and meet the approximately two-second post-release target.
-- The uppercase selected-text command succeeds in five consecutive controlled trials using ChatGPT-subscription OAuth.
+- The uppercase selected-text command succeeds in five consecutive controlled trials using the configured provider (OpenAI API key by default; ChatGPT-subscription OAuth when selected).
 - Esc produces zero insertions in five trials at recording, transcription, and LLM-wait stages.
 - No token, key, audio capture, model artifact, `dist/` content, or `.build/` content appears in tracked files.
 
@@ -186,7 +186,7 @@ Acceptance criteria:
 | Focus changes while ASR/LLM work is pending | Text could enter the wrong app | Capture target identity, verify before insertion, withhold on mismatch |
 | Clipboard content is lossy or overwritten concurrently | User data loss | Snapshot every pasteboard item/type, compare change count before restore, dependency-injected tests |
 | FluidAudio API/model artifacts change | Build or runtime model preparation breaks | Exact package pin, adapter boundary, source-grounded API tests |
-| ChatGPT backend rejects third-party clients or changes contract | AI Commands unavailable | Specific provider error, one credential reload on 401, environment-only API-key fallback after verified incompatibility |
+| ChatGPT backend rejects third-party clients or changes contract | The optional ChatGPT-subscription provider is unavailable | Specific provider error, one credential reload on 401; the default OpenAI API-key provider is unaffected |
 | Selected text contains prompt-like content | LLM follows text rather than user instruction | Strong developer instruction, serialize instruction and selection as distinct data, output-only validation |
 | Ad-hoc signing changes permission identity after rebuild | Permissions appear lost | Stable bundle identifier and bundle path; document local signing limitation |
 | Local ASR latency misses target | Dictation feels slower than typing | Warm models after onboarding, measure ASR separately, avoid LLM post-processing by default |

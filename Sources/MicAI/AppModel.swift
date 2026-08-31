@@ -74,8 +74,8 @@ final class AppModel: ObservableObject {
     commandPipeline = CommandPipeline(
       dictationPipeline: pipeline,
       commandEngine: CommandEngine(
-        transformer: ChatGPTResponsesClient(
-          credentialLoader: CodexAuthFileLoader(),
+        transformer: Self.makeTransformer(
+          for: settingsStore.settings.llmProvider,
           statusHandler: providerStatusRelay.send
         )
       ),
@@ -180,6 +180,13 @@ final class AppModel: ObservableObject {
 
   func applySettings() {
     hotkeyMonitor.update(settings: settingsStore.settings)
+    let transformer = Self.makeTransformer(
+      for: settingsStore.settings.llmProvider,
+      statusHandler: providerStatusRelay.send
+    )
+    Task {
+      await commandPipeline.updateTransformer(transformer)
+    }
     refreshProviderStatus()
   }
 
@@ -625,6 +632,21 @@ final class AppModel: ObservableObject {
       && !settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
     providerStatus = configured ? .readyToAttempt : .notConfigured
+  }
+
+  private static func makeTransformer(
+    for provider: LLMProvider,
+    statusHandler: @escaping @Sendable (ProviderStatus) -> Void
+  ) -> any LLMTransforming {
+    switch provider {
+    case .openAIAPIKey:
+      OpenAIAPIKeyClient()
+    case .chatGPTSubscription:
+      ChatGPTResponsesClient(
+        credentialLoader: CodexAuthFileLoader(),
+        statusHandler: statusHandler
+      )
+    }
   }
 }
 

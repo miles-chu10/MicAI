@@ -16,7 +16,7 @@ used to prepare this ledger.
 | 1 | A clean-clone `bash scripts/codex-build.sh` succeeds and produces `dist/MicAI.app`. | **UNVERIFIED-MANUAL** | The current worktree build passed on 2026-07-27 and produced a signed app with an arm64 executable, valid plist, `MicAI.icns`, macOS 14 minimum, and `LSUIElement=true`. A clean clone with a cold dependency cache was not created because this task is constrained to the current worktree. |
 | 2 | Launch shows the menu-bar icon; onboarding requests Microphone access and explains Accessibility. | **UNVERIFIED-MANUAL** | The packaged process remained alive and CoreGraphics observed its 940×640 primary window. Source and build evidence cover `MenuBarExtra`, `LSUIElement`, and the five-step onboarding UI. The menu icon and fresh-preference/TCC denial-and-recovery journey were not exercised. Follow Manual runbook A. |
 | 3 | Holding the dictation hotkey records; release transcribes locally with Parakeet and inserts into TextEdit within about two seconds for a 10-second utterance. | **UNVERIFIED-MANUAL** | The audio → local ASR → cleanup → exact-target guarded insertion path compiles and its fake-boundary tests pass. No model was downloaded, no audio was recorded, and no TextEdit or latency trial was performed. Follow Manual runbook B, including hold and toggle trials. |
-| 4 | Selected text plus the spoken command “make this uppercase” replaces it using ChatGPT-subscription OAuth. | **UNVERIFIED-MANUAL** | Request/auth/SSE behavior is fake-transport tested, including true incremental byte streaming, cancellation, timeout, early EOF, completion, and one 401 credential reload. No credential contents were accessed and no authenticated request was made. Follow Manual runbook C. |
+| 4 | Selected text plus the spoken command “make this uppercase” replaces it using the configured provider. | **UNVERIFIED-MANUAL** | Request/auth/SSE behavior is fake-transport tested for both providers (OpenAI API key and ChatGPT subscription), including true incremental byte streaming, cancellation, timeout, early EOF, completion, and one 401 credential reload for the subscription provider. No credential contents were accessed and no authenticated request was made. Follow Manual runbook C. |
 | 5 | Escape cancels recording without inserting anything. | **UNVERIFIED-MANUAL** | Core cancellation and stale-result suppression tests pass, and the HUD/cross-phase Esc path is wired. Real global Esc, recording, ASR wait, LLM wait, HUD focus, and zero-insertion behavior were not exercised. Follow Manual runbook D. |
 | 6 | `bash scripts/codex-test.sh` passes MicAICore tests covering command routing, auth parsing, and injected clipboard restoration. | **PASS** | Final run on 2026-07-27 passed 79 tests in 13 suites. Existing suites include `CommandEngineTests`, `CodexAuthFileLoaderTests`, `TextInsertionCoordinatorTests`, and the new streaming client cases. |
 | 7 | No secrets are stored in the repo; `dist/` and `.build/` stay absent from `git status`. | **PASS** | No credential was read, printed, copied, or modified. Settings serialization tests exclude secret/transient fields. `git status --short` showed source/workflow changes but no `.build/` or `dist/` artifacts; both remain ignored. The production credential path remains read-only runtime input. |
@@ -75,22 +75,24 @@ credential values, request bodies, or token/path contents.
    clipboard restoration. Do not interpret Escape after text is already pasted
    as undo; that point is intentionally too late.
 
-### C. First real ChatGPT-subscription command
+### C. First real AI Command
 
 1. Obtain explicit approval immediately before this external call. Do not open
-   or inspect the credential file.
-2. In Settings, choose a command hotkey distinct from dictation, enter a
-   supported subscription model, save, and confirm AI Commands reports ready to
-   attempt.
+   or inspect any credential file or environment value.
+2. For the default provider, launch MicAI with `OPENAI_API_KEY` set in its
+   environment. In Settings, choose a command hotkey distinct from dictation,
+   keep the provider on **OpenAI API key**, enter a supported model, save, and
+   confirm AI Commands reports ready to attempt. To exercise the opt-in
+   ChatGPT-subscription provider instead, select it in Settings and confirm the
+   same readiness; do not open or inspect the credential file.
 3. In TextEdit type `hello`, select it, hold the command hotkey, say
    “make this uppercase,” and release. Confirm the result is `HELLO`, replacement
    occurs once, and no partial/failed output is inserted.
 4. Put the cursor on an empty line with no selection, hold the command hotkey,
    speak a short drafting instruction, and release. Confirm the completed result
    is inserted rather than routed as a replacement.
-5. Record only provider status, SSE result classification, and pass/fail. If the
-   subscription route is rejected, stop; do not configure an API-key fallback,
-   change provider metadata, or retry with credential experiments without a
+5. Record only provider status, SSE result classification, and pass/fail. If a
+   route is rejected, stop; do not retry with credential experiments without a
    separate approval.
 
 ### D. HUD and Escape exercises
