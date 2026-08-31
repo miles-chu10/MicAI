@@ -63,6 +63,27 @@ swiftc "$PROJECT_ROOT/scripts/generate-app-icon.swift" \
   -string "MicAI records audio only while you invoke dictation or a voice command." \
   "$PLIST_PATH"
 
+assert_plist_value() {
+  local key="$1"
+  local expected="$2"
+  local actual
+  actual="$(/usr/bin/plutil -extract "$key" raw -o - "$PLIST_PATH")"
+  if [ "$actual" != "$expected" ]; then
+    echo "Unexpected $key in $PLIST_PATH: $actual" >&2
+    exit 1
+  fi
+}
+
+/usr/bin/plutil -lint "$PLIST_PATH" >/dev/null
+assert_plist_value CFBundleIdentifier "com.mileschu.micai"
+assert_plist_value CFBundleExecutable "MicAI"
+assert_plist_value CFBundleIconFile "MicAI"
+assert_plist_value CFBundlePackageType "APPL"
+assert_plist_value LSMinimumSystemVersion "14.0"
+assert_plist_value LSUIElement "true"
+test -x "$EXECUTABLE_DIR/MicAI"
+test -s "$ICON_PATH"
+
 /usr/bin/codesign --force --deep --sign - "$APP_BUNDLE"
 /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
 

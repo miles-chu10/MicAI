@@ -5,11 +5,13 @@ import PackageDescription
 let package = Package(
   name: "MicAI",
   platforms: [
-    .macOS(.v14)
+    .macOS(.v14),
+    .iOS(.v17),
   ],
   products: [
     .library(name: "MicAICore", targets: ["MicAICore"]),
     .executable(name: "MicAI", targets: ["MicAI"]),
+    .executable(name: "MicAIiOS", targets: ["MicAIiOS"]),
   ],
   dependencies: [
     .package(
@@ -28,9 +30,17 @@ let package = Package(
       name: "MicAI",
       dependencies: ["MicAICore"]
     ),
+    .executableTarget(
+      name: "MicAIiOS",
+      dependencies: ["MicAICore"]
+    ),
     .testTarget(
       name: "MicAICoreTests",
       dependencies: ["MicAICore"]
+    ),
+    .testTarget(
+      name: "MicAIAppTests",
+      dependencies: ["MicAI"]
     ),
   ]
 )

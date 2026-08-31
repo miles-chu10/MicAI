@@ -2,10 +2,16 @@ import Foundation
 
 public struct CommandResult: Sendable, Equatable {
   public let instruction: Transcript
+  public let sourceText: String?
   public let intent: InsertionIntent
 
-  public init(instruction: Transcript, intent: InsertionIntent) {
+  public init(
+    instruction: Transcript,
+    sourceText: String? = nil,
+    intent: InsertionIntent
+  ) {
     self.instruction = instruction
+    self.sourceText = sourceText
     self.intent = intent
   }
 }
@@ -36,12 +42,14 @@ public actor CommandPipeline {
   public func begin(
     target: TargetIdentity,
     levels: @escaping @Sendable (Float) -> Void,
+    maximumDurationReached: @escaping @Sendable () -> Void = {},
     operationStarted: @escaping @Sendable (UUID) async -> Void = { _ in }
   ) async throws -> UUID {
     let operationID = try await dictationPipeline.begin(
       mode: .command,
       target: target,
       levels: levels,
+      maximumDurationReached: maximumDurationReached,
       operationStarted: operationStarted
     )
 
@@ -79,7 +87,8 @@ public actor CommandPipeline {
       return try await commandEngine.execute(
         instruction: instruction.text,
         selectedText: context.selectedText,
-        model: model
+        model: model,
+        requestID: operationID
       )
     }
     guard
@@ -96,7 +105,11 @@ public actor CommandPipeline {
       guard await coordinator.isCurrent(operationID: operationID) else {
         throw MicAIError.cancelled
       }
-      return CommandResult(instruction: instruction, intent: intent)
+      return CommandResult(
+        instruction: instruction,
+        sourceText: context.selectedText,
+        intent: intent
+      )
     } catch let error as MicAIError {
       if await coordinator.isCurrent(operationID: operationID) {
         _ = await coordinator.fail(operationID: operationID, error: error)

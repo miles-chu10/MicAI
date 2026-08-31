@@ -12,6 +12,9 @@ struct AppSettingsTests {
     #expect(settings.dictationActivationMode == .hold)
     #expect(settings.commandHotkey == nil)
     #expect(settings.llmModel == "")
+    #expect(settings.dictationProvider == .parakeet)
+    #expect(settings.openAITranscriptionModel == "gpt-transcribe")
+    #expect(settings.openAITranscriptionFallbackEnabled)
   }
 
   @Test
@@ -53,6 +56,64 @@ struct AppSettingsTests {
     } catch {
       #expect(error as? AppSettingsValidationError == .emptyModel)
     }
+  }
+
+  @Test
+  func openAITranscriptionModelTrimsAndAllowsCustomIDs() throws {
+    let settings = AppSettings(
+      dictationHotkey: .rightOption,
+      commandHotkey: nil,
+      dictationActivationMode: .hold,
+      llmModel: "",
+      dictationProvider: .openAI,
+      openAITranscriptionModel: "  custom-transcriber-v2  ",
+      openAITranscriptionFallbackEnabled: false
+    )
+
+    let validated = try settings.validated()
+    #expect(validated.openAITranscriptionModel == "custom-transcriber-v2")
+    #expect(validated.dictationTranscriptionRequest.model == "custom-transcriber-v2")
+    #expect(!validated.dictationTranscriptionRequest.fallbackToParakeet)
+  }
+
+  @Test
+  func validationRejectsEmptyOpenAITranscriptionModel() {
+    let settings = AppSettings(
+      dictationHotkey: .rightOption,
+      commandHotkey: nil,
+      dictationActivationMode: .hold,
+      llmModel: "",
+      dictationProvider: .openAI,
+      openAITranscriptionModel: " \n "
+    )
+
+    #expect(throws: AppSettingsValidationError.emptyOpenAITranscriptionModel) {
+      try settings.validated()
+    }
+  }
+
+  @Test
+  func legacySettingsDecodeToParakeetWithoutResettingExistingValues() throws {
+    let legacy = """
+      {
+        "dictationHotkey": {"keyCode": 49, "modifiers": ["control", "option"]},
+        "commandHotkey": null,
+        "dictationActivationMode": "toggle",
+        "llmModel": "legacy-command-model"
+      }
+      """
+
+    let decoded = try JSONDecoder().decode(
+      AppSettings.self,
+      from: Data(legacy.utf8)
+    )
+
+    #expect(decoded.dictationHotkey == .controlOptionSpace)
+    #expect(decoded.dictationActivationMode == .toggle)
+    #expect(decoded.llmModel == "legacy-command-model")
+    #expect(decoded.dictationProvider == .parakeet)
+    #expect(decoded.openAITranscriptionModel == "gpt-transcribe")
+    #expect(decoded.openAITranscriptionFallbackEnabled)
   }
 
   @Test
@@ -102,7 +163,10 @@ struct AppSettingsTests {
       dictationHotkey: .rightOption,
       commandHotkey: Hotkey(keyCode: 49, modifiers: [.command]),
       dictationActivationMode: .toggle,
-      llmModel: "gpt-test"
+      llmModel: "gpt-test",
+      dictationProvider: .openAI,
+      openAITranscriptionModel: "custom-transcriber",
+      openAITranscriptionFallbackEnabled: false
     )
 
     let data = try JSONEncoder().encode(settings)
@@ -117,8 +181,14 @@ struct AppSettingsTests {
           "commandHotkey",
           "dictationActivationMode",
           "llmModel",
+          "dictationProvider",
+          "openAITranscriptionModel",
+          "openAITranscriptionFallbackEnabled",
         ]
     )
+    let serializedKeys = object.keys.map { $0.lowercased() }
+    #expect(!serializedKeys.contains { $0.contains("apikey") })
+    #expect(!serializedKeys.contains { $0.contains("credential") })
     #expect(try JSONDecoder().decode(AppSettings.self, from: data) == settings)
   }
 }
