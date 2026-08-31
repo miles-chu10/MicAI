@@ -1,3 +1,4 @@
+import Foundation
 import MicAICore
 import SwiftUI
 
@@ -118,7 +119,7 @@ private struct OverviewView: View {
           Text("Speak where you work")
             .font(.largeTitle.weight(.semibold))
           Text(
-            "MicAI transcribes dictation locally and uses ChatGPT only for explicit AI Commands."
+            "MicAI transcribes dictation locally and uses your selected provider only for explicit AI Commands."
           )
           .font(.title3)
           .foregroundStyle(.secondary)
@@ -257,11 +258,11 @@ private struct CommandsView: View {
           icon: "sparkles",
           title: "AI Commands",
           subtitle:
-            "Only your spoken instruction and selected text are sent to the configured ChatGPT route."
+            "Only your spoken instruction and selected text are sent to the selected provider."
         )
         ReadinessList(readiness: appModel.readiness.command)
         GroupBox("Provider") {
-          LabeledContent("ChatGPT subscription") {
+          LabeledContent(appModel.settingsStore.settings.llmProvider.displayName) {
             Text(appModel.providerStatus.summary)
               .multilineTextAlignment(.trailing)
           }
@@ -300,10 +301,20 @@ private struct ActivityView: View {
 
       if let transcript = appModel.lastTranscript {
         GroupBox("Most recent local result") {
-          Text(transcript)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 8)
+          VStack(alignment: .leading, spacing: 8) {
+            Text(transcript)
+              .textSelection(.enabled)
+            if let latency = appModel.lastLatency {
+              Label(
+                String(format: "Inserted in %.1fs", latency.duration),
+                systemImage: "timer"
+              )
+              .font(.caption)
+              .foregroundStyle(.secondary)
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.vertical, 8)
         }
       } else {
         ContentUnavailableView(

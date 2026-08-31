@@ -36,6 +36,17 @@ struct SettingsView: View {
 
       Section("AI Commands") {
         Picker(
+          "Provider",
+          selection: $draft.llmProvider
+        ) {
+          ForEach(LLMProvider.allCases, id: \.self) { provider in
+            Text(provider.displayName).tag(provider)
+          }
+        }
+        Text(providerDescription)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Picker(
           "Hotkey",
           selection: $draft.commandHotkey
         ) {
@@ -45,11 +56,11 @@ struct SettingsView: View {
           }
         }
         TextField(
-          "ChatGPT model",
+          "Model",
           text: $draft.llmModel,
-          prompt: Text("Enter a supported subscription model")
+          prompt: Text("Enter a supported model")
         )
-        LabeledContent("Provider", value: appModel.providerStatus.summary)
+        LabeledContent("Status", value: appModel.providerStatus.summary)
       }
 
       Section("Readiness") {
@@ -139,6 +150,15 @@ struct SettingsView: View {
       "Ready"
     case .failed:
       "Preparation failed"
+    }
+  }
+
+  private var providerDescription: String {
+    switch draft.llmProvider {
+    case .chatgptSubscription:
+      "ChatGPT subscription (Codex sign-in)"
+    case .openAIAPIKey:
+      "OpenAI API key (OPENAI_API_KEY env var)"
     }
   }
 

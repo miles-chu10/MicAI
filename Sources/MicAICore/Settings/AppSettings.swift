@@ -14,6 +14,20 @@ public enum DictationActivationMode: String, Codable, CaseIterable, Sendable {
   }
 }
 
+public enum LLMProvider: String, Codable, CaseIterable, Hashable, Sendable {
+  case chatgptSubscription
+  case openAIAPIKey
+
+  public var displayName: String {
+    switch self {
+    case .chatgptSubscription:
+      "ChatGPT subscription"
+    case .openAIAPIKey:
+      "OpenAI API key"
+    }
+  }
+}
+
 public enum HotkeyModifier: String, Codable, CaseIterable, Hashable, Sendable {
   case command
   case control
@@ -73,28 +87,54 @@ extension AppSettingsValidationError: LocalizedError {
 }
 
 public struct AppSettings: Codable, Equatable, Sendable {
+  private enum CodingKeys: String, CodingKey {
+    case dictationHotkey
+    case commandHotkey
+    case dictationActivationMode
+    case llmModel
+    case llmProvider
+  }
+
   public static let defaults = AppSettings(
     dictationHotkey: .rightOption,
     commandHotkey: nil,
     dictationActivationMode: .hold,
-    llmModel: ""
+    llmModel: "",
+    llmProvider: .chatgptSubscription
   )
 
   public var dictationHotkey: Hotkey
   public var commandHotkey: Hotkey?
   public var dictationActivationMode: DictationActivationMode
   public var llmModel: String
+  public var llmProvider: LLMProvider
 
   public init(
     dictationHotkey: Hotkey,
     commandHotkey: Hotkey?,
     dictationActivationMode: DictationActivationMode,
-    llmModel: String
+    llmModel: String,
+    llmProvider: LLMProvider = .chatgptSubscription
   ) {
     self.dictationHotkey = dictationHotkey
     self.commandHotkey = commandHotkey
     self.dictationActivationMode = dictationActivationMode
     self.llmModel = llmModel
+    self.llmProvider = llmProvider
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    dictationHotkey = try container.decode(Hotkey.self, forKey: .dictationHotkey)
+    commandHotkey = try container.decodeIfPresent(Hotkey.self, forKey: .commandHotkey)
+    dictationActivationMode = try container.decode(
+      DictationActivationMode.self,
+      forKey: .dictationActivationMode
+    )
+    llmModel = try container.decode(String.self, forKey: .llmModel)
+    llmProvider =
+      try container.decodeIfPresent(LLMProvider.self, forKey: .llmProvider)
+      ?? .chatgptSubscription
   }
 
   public func validated() throws -> AppSettings {

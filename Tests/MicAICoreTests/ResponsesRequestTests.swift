@@ -13,7 +13,8 @@ struct ResponsesRequestTests {
         selectedText: "hello",
         model: "gpt-5-codex",
         sessionID: sessionID
-      )
+      ),
+      contract: .chatGPTCodex
     )
 
     #expect(object["model"] as? String == "gpt-5-codex")
@@ -33,13 +34,32 @@ struct ResponsesRequestTests {
   }
 
   @Test
+  func encodesPublicOpenAIRequestShapeWithoutCodexClientMetadata() throws {
+    let sessionID = UUID()
+    let object = try encodedObject(
+      LLMRequest(
+        instruction: "make this uppercase",
+        selectedText: "hello",
+        model: "gpt-5",
+        sessionID: sessionID
+      ),
+      contract: .openAI
+    )
+
+    #expect(object["model"] as? String == "gpt-5")
+    #expect(object["prompt_cache_key"] as? String == sessionID.uuidString)
+    #expect(object["client_metadata"] == nil)
+  }
+
+  @Test
   func wrapsInstructionAndSelectionAsSeparateJSONFields() throws {
     let object = try encodedObject(
       LLMRequest(
         instruction: "make this uppercase",
         selectedText: "hello",
         model: "gpt-5-codex"
-      )
+      ),
+      contract: .chatGPTCodex
     )
     let payload = try payloadObject(from: object)
 
@@ -50,7 +70,8 @@ struct ResponsesRequestTests {
   @Test
   func absentSelectionSerializesAsJSONNull() throws {
     let object = try encodedObject(
-      LLMRequest(instruction: "write a haiku", selectedText: nil, model: "gpt-5-codex")
+      LLMRequest(instruction: "write a haiku", selectedText: nil, model: "gpt-5-codex"),
+      contract: .chatGPTCodex
     )
     let payload = try payloadObject(from: object)
 
@@ -63,7 +84,8 @@ struct ResponsesRequestTests {
     let instruction = "He said \"hi\"\nand \\ escaped {\"json\":true}"
     let selection = "line1\nline2 with \"quotes\""
     let object = try encodedObject(
-      LLMRequest(instruction: instruction, selectedText: selection, model: "gpt-5-codex")
+      LLMRequest(instruction: instruction, selectedText: selection, model: "gpt-5-codex"),
+      contract: .chatGPTCodex
     )
     let payload = try payloadObject(from: object)
 
@@ -72,8 +94,11 @@ struct ResponsesRequestTests {
   }
 
   // Decodes the outer request body into a dictionary for structural assertions.
-  private func encodedObject(_ request: LLMRequest) throws -> [String: Any] {
-    let data = try ResponsesRequest(request: request).encodedData()
+  private func encodedObject(
+    _ request: LLMRequest,
+    contract: ResponsesRequestContract
+  ) throws -> [String: Any] {
+    let data = try ResponsesRequest(request: request).encodedData(for: contract)
     return try #require(
       try JSONSerialization.jsonObject(with: data) as? [String: Any]
     )

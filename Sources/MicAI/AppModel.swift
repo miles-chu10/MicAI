@@ -8,6 +8,7 @@ final class AppModel: ObservableObject {
   @Published private(set) var operationPhase: OperationPhase = .idle
   @Published private(set) var inputLevel: Float = 0
   @Published private(set) var lastTranscript: String?
+  @Published private(set) var lastLatency: LatencyMeasurement?
   @Published private(set) var errorMessage: String?
   @Published private(set) var providerStatus: ProviderStatus = .notConfigured
   @Published var isOnboardingPresented = false
@@ -25,12 +26,16 @@ final class AppModel: ObservableObject {
   private let insertionCoordinator: TextInsertionCoordinator
   private let hudController: RecordingHUDController
   private let providerStatusRelay: ProviderStatusRelay
+  private let llmProviderRelay: LLMProviderRelay
+  private let redactedLogger = RedactedLogger()
   private var operationID: UUID?
   private var operationAttemptID: UUID?
   private var operationStartupMode: MicAIMode?
   private var pendingStopMode: MicAIMode?
   private var operationMode: MicAIMode?
   private var operationTarget: TargetIdentity?
+  private var latencyStartedAt: Date?
+  private var localMetrics = LocalMetrics()
   private var cancellables: Set<AnyCancellable> = []
 
   private lazy var hotkeyMonitor = GlobalHotkeyMonitor(
@@ -49,6 +54,9 @@ final class AppModel: ObservableObject {
     let recognizer = FluidAudioRecognizer()
     let targetTracker = TargetApplicationTracker()
     let providerStatusRelay = ProviderStatusRelay()
+    let llmProviderRelay = LLMProviderRelay(
+      provider: settingsStore.settings.llmProvider
+    )
 
     self.settingsStore = settingsStore
     microphonePermission = MicrophonePermissionService()
@@ -56,6 +64,7 @@ final class AppModel: ObservableObject {
     launchAtLogin = LaunchAtLoginService()
     hudController = RecordingHUDController()
     self.providerStatusRelay = providerStatusRelay
+    self.llmProviderRelay = llmProviderRelay
     self.coordinator = coordinator
     self.recognizer = recognizer
     self.targetTracker = targetTracker
@@ -71,12 +80,18 @@ final class AppModel: ObservableObject {
       targetValidator: targetTracker
     )
     self.insertionCoordinator = insertionCoordinator
+    let chatGPTClient = ChatGPTResponsesClient(
+      credentialLoader: CodexAuthFileLoader(),
+      statusHandler: providerStatusRelay.send
+    )
+    let openAIAPIKeyClient = OpenAIAPIKeyClient()
     commandPipeline = CommandPipeline(
       dictationPipeline: pipeline,
       commandEngine: CommandEngine(
-        transformer: ChatGPTResponsesClient(
-          credentialLoader: CodexAuthFileLoader(),
-          statusHandler: providerStatusRelay.send
+        transformer: SwitchingLLMClient(
+          chatGPTSubscriptionClient: chatGPTClient,
+          openAIAPIKeyClient: openAIAPIKeyClient,
+          providerSupplier: { llmProviderRelay.current() }
         )
       ),
       insertionCoordinator: insertionCoordinator,
@@ -109,6 +124,9 @@ final class AppModel: ObservableObject {
       .store(in: &cancellables)
     providerStatusRelay.setHandler { [weak self] status in
       Task { @MainActor [weak self] in
+        guard self?.settingsStore.settings.llmProvider == .chatgptSubscription else {
+          return
+        }
         self?.providerStatus = status
       }
     }
@@ -179,6 +197,7 @@ final class AppModel: ObservableObject {
   }
 
   func applySettings() {
+    llmProviderRelay.set(settingsStore.settings.llmProvider)
     hotkeyMonitor.update(settings: settingsStore.settings)
     refreshProviderStatus()
   }
@@ -287,6 +306,7 @@ final class AppModel: ObservableObject {
             appModel.operationMode = .dictation
             appModel.operationTarget = target
             appModel.operationPhase = .recording
+            appModel.redactedLogger.log(.operationStarted(mode: .dictation))
             return true
           }
           if !accepted {
@@ -313,7 +333,11 @@ final class AppModel: ObservableObject {
         return
       }
       errorMessage = error.localizedDescription
-      operationPhase = .failed((error as? MicAIError) ?? .audioUnavailable)
+      let micAIError = (error as? MicAIError) ?? .audioUnavailable
+      redactedLogger.log(
+        .operationFailed(mode: .dictation, error: micAIError)
+      )
+      operationPhase = .failed(micAIError)
       clearOperation(ifAttemptID: attemptID)
       hotkeyMonitor.reset(mode: .dictation)
     }
@@ -324,7 +348,11 @@ final class AppModel: ObservableObject {
       return
     }
 
+    latencyStartedAt = Date()
     operationPhase = .transcribing
+    redactedLogger.log(
+      .phaseChanged(mode: .dictation, phase: .transcribing)
+    )
     inputLevel = 0
     do {
       let transcript = try await pipeline.finish(operationID: operationID)
@@ -332,6 +360,9 @@ final class AppModel: ObservableObject {
         throw MicAIError.cancelled
       }
       operationPhase = .inserting
+      redactedLogger.log(
+        .phaseChanged(mode: .dictation, phase: .inserting)
+      )
       accessibilityPermission.refresh()
       guard accessibilityPermission.isTrusted else {
         throw MicAIError.accessibilityDenied
@@ -369,6 +400,9 @@ final class AppModel: ObservableObject {
         _ = await coordinator.fail(operationID: operationID, error: micAIError)
       }
       errorMessage = micAIError.localizedDescription
+      redactedLogger.log(
+        .operationFailed(mode: .dictation, error: micAIError)
+      )
       operationPhase = .failed(micAIError)
       clearOperation()
     }
@@ -379,6 +413,7 @@ final class AppModel: ObservableObject {
       return
     }
     await pipeline.cancel(operationID: operationID)
+    redactedLogger.log(.operationCancelled(mode: .dictation))
     operationPhase = .idle
     errorMessage = nil
     inputLevel = 0
@@ -446,6 +481,7 @@ final class AppModel: ObservableObject {
             appModel.operationMode = .command
             appModel.operationTarget = target
             appModel.operationPhase = .recording
+            appModel.redactedLogger.log(.operationStarted(mode: .command))
             return true
           }
           if !accepted {
@@ -473,6 +509,9 @@ final class AppModel: ObservableObject {
       }
       let micAIError = (error as? MicAIError) ?? .insertionFailed
       errorMessage = micAIError.localizedDescription
+      redactedLogger.log(
+        .operationFailed(mode: .command, error: micAIError)
+      )
       operationPhase = .failed(micAIError)
       clearOperation(ifAttemptID: attemptID)
       hotkeyMonitor.reset(mode: .command)
@@ -484,7 +523,11 @@ final class AppModel: ObservableObject {
       return
     }
 
+    latencyStartedAt = Date()
     operationPhase = .transcribing
+    redactedLogger.log(
+      .phaseChanged(mode: .command, phase: .transcribing)
+    )
     inputLevel = 0
     do {
       let appModel = self
@@ -494,6 +537,9 @@ final class AppModel: ObservableObject {
         awaitingLLM: {
           await MainActor.run {
             appModel.operationPhase = .awaitingLLM
+            appModel.redactedLogger.log(
+              .phaseChanged(mode: .command, phase: .awaitingLLM)
+            )
           }
         }
       )
@@ -501,6 +547,9 @@ final class AppModel: ObservableObject {
         throw MicAIError.cancelled
       }
       operationPhase = .inserting
+      redactedLogger.log(
+        .phaseChanged(mode: .command, phase: .inserting)
+      )
       accessibilityPermission.refresh()
       guard accessibilityPermission.isTrusted else {
         throw MicAIError.accessibilityDenied
@@ -529,7 +578,7 @@ final class AppModel: ObservableObject {
       guard await coordinator.complete(operationID: operationID) else {
         throw MicAIError.cancelled
       }
-      providerStatus = .readyToAttempt
+      refreshProviderStatus()
       complete(transcript: result.instruction)
     } catch {
       let micAIError = (error as? MicAIError) ?? .llmServerFailure
@@ -538,11 +587,21 @@ final class AppModel: ObservableObject {
       {
         return
       }
-      providerStatus = .failed(micAIError)
+      if settingsStore.settings.llmProvider == .openAIAPIKey {
+        providerStatus =
+          micAIError == .credentialMissing
+          ? .apiKeyMissing : .apiKeyFailed(micAIError)
+        errorMessage = providerStatus.summary
+      } else {
+        providerStatus = .failed(micAIError)
+        errorMessage = micAIError.localizedDescription
+      }
       if await coordinator.isCurrent(operationID: operationID) {
         _ = await coordinator.fail(operationID: operationID, error: micAIError)
       }
-      errorMessage = micAIError.localizedDescription
+      redactedLogger.log(
+        .operationFailed(mode: .command, error: micAIError)
+      )
       operationPhase = .failed(micAIError)
       clearOperation()
     }
@@ -553,6 +612,7 @@ final class AppModel: ObservableObject {
       return
     }
     await commandPipeline.cancel(operationID: operationID)
+    redactedLogger.log(.operationCancelled(mode: .command))
     operationPhase = .idle
     errorMessage = nil
     inputLevel = 0
@@ -560,6 +620,17 @@ final class AppModel: ObservableObject {
   }
 
   private func complete(transcript: Transcript, diagnostic: String? = nil) {
+    if let mode = operationMode {
+      if let latencyStartedAt {
+        let measurement = LatencyMeasurement(
+          mode: mode,
+          duration: Date().timeIntervalSince(latencyStartedAt)
+        )
+        localMetrics.record(measurement)
+        lastLatency = measurement
+      }
+      redactedLogger.log(.operationCompleted(mode: mode))
+    }
     lastTranscript = transcript.text
     errorMessage = diagnostic
     operationPhase = .idle
@@ -582,6 +653,7 @@ final class AppModel: ObservableObject {
     pendingStopMode = nil
     operationMode = nil
     operationTarget = nil
+    latencyStartedAt = nil
   }
 
   private func rejectDictationStart(with error: MicAIError) {
@@ -599,6 +671,9 @@ final class AppModel: ObservableObject {
       return
     }
     guard operationID != nil else {
+      if let mode = operationStartupMode {
+        redactedLogger.log(.operationCancelled(mode: mode))
+      }
       operationAttemptID = nil
       operationPhase = .idle
       inputLevel = 0
@@ -624,7 +699,13 @@ final class AppModel: ObservableObject {
       settings.commandHotkey != nil
       && !settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-    providerStatus = configured ? .readyToAttempt : .notConfigured
+    switch settings.llmProvider {
+    case .chatgptSubscription:
+      providerStatus = configured ? .readyToAttempt : .notConfigured
+    case .openAIAPIKey:
+      providerStatus =
+        OpenAIAPIKeyClient.hasKey() ? .apiKeyReadyToAttempt : .apiKeyMissing
+    }
   }
 }
 
@@ -645,5 +726,27 @@ private final class ProviderStatusRelay: @unchecked Sendable {
     let handler = self.handler
     lock.unlock()
     handler?(status)
+  }
+}
+
+private final class LLMProviderRelay: @unchecked Sendable {
+  private let lock = NSLock()
+  private var provider: LLMProvider
+
+  init(provider: LLMProvider) {
+    self.provider = provider
+  }
+
+  func current() -> LLMProvider {
+    lock.lock()
+    let provider = self.provider
+    lock.unlock()
+    return provider
+  }
+
+  func set(_ provider: LLMProvider) {
+    lock.lock()
+    self.provider = provider
+    lock.unlock()
   }
 }

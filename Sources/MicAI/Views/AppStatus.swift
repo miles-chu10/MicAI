@@ -11,7 +11,7 @@ extension OperationPhase {
     case .transcribing:
       "Transcribing"
     case .awaitingLLM:
-      "Waiting for ChatGPT"
+      "Waiting for AI"
     case .inserting:
       "Inserting"
     case .failed:
