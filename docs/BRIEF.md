@@ -76,10 +76,10 @@ subscription via OAuth, not a metered API key.
   target (menu bar UI, hotkeys, insertion — AppKit-dependent). Tests on MicAICore.
 - Secrets: never write tokens or keys to the repo or any dotfile; `auth.json` is
   read-only input. `.env` files are off-limits.
-- Repo conventions already scaffolded: `src/`, `docs/`, `scripts/`, `AGENTS.md`,
-  `CLAUDE.md`. Put the Swift package at repo root (`Package.swift`, `Sources/`,
-  `Tests/`); `src/` may be removed. Keep `scripts/codex-build.sh`,
-  `scripts/codex-run.sh`, `scripts/codex-test.sh` working as the only entry points.
+- Repo layout: Swift package at repo root (`Package.swift`, `Sources/`, `Tests/`)
+  plus `docs/`, `scripts/`, `AGENTS.md`, and `CLAUDE.md`. Keep
+  `scripts/codex-build.sh`, `scripts/codex-run.sh`, and `scripts/codex-test.sh`
+  working as the primary entry points.
 
 ## Acceptance criteria (prototype is "done" when)
 

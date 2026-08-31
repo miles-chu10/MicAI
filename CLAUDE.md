@@ -10,7 +10,7 @@ constraint, secrets rules). `docs/BRIEF.md` is the product/engineering source of
 ```
 Package.swift, Sources/, Tests/   Swift package (MicAICore + MicAI app)
 scripts/                          Build/run/test entry points (pure SwiftPM)
-docs/                             BRIEF, PRD, SPEC, PLAN
+docs/                             Public docs index + BRIEF, PRD, SPEC, PLAN, ACCEPTANCE
 ```
 
 ## Quick Commands
