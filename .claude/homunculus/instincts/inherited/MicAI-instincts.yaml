@@ -1,0 +1,338 @@
+# Instincts generated from https://github.com/miles-chu10/MicAI
+# Generated: 2026-07-28T06:32:10.778Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: MicAI-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/miles-chu10/MicAI
+---
+
+# MicAI Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: docs
+
+## Evidence
+
+- 1 commits analyzed
+- Detected conventional commit pattern
+- Examples: docs: polish public README and contributor landing
+
+---
+id: MicAI-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/miles-chu10/MicAI
+---
+
+# MicAI Commit Length
+
+## Action
+
+Write moderate-length commit messages (~50 characters)
+
+## Evidence
+
+- Average commit message length: 50 chars
+- Based on 1 commits
+
+---
+id: MicAI-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/miles-chu10/MicAI
+---
+
+# MicAI Naming Files
+
+## Action
+
+Use PascalCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: PascalCase
+
+---
+id: MicAI-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/miles-chu10/MicAI
+---
+
+# MicAI Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: MicAI-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/miles-chu10/MicAI
+---
+
+# MicAI Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: MicAI-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/miles-chu10/MicAI
+---
+
+# MicAI Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: micai-instinct-file-naming
+trigger: "When creating a new file in the codebase"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: miles-chu10/MicAI
+---
+
+# Micai Instinct File Naming
+
+## Action
+
+Name the file using PascalCase (e.g., MyComponent.ts)
+
+## Evidence
+
+- Pattern in namingConventions.files: PascalCase
+
+---
+id: micai-instinct-function-naming
+trigger: "When defining a new function"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: miles-chu10/MicAI
+---
+
+# Micai Instinct Function Naming
+
+## Action
+
+Name the function using camelCase (e.g., fetchData)
+
+## Evidence
+
+- Pattern in namingConventions.functions: camelCase
+
+---
+id: micai-instinct-class-naming
+trigger: "When defining a new class"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: miles-chu10/MicAI
+---
+
+# Micai Instinct Class Naming
+
+## Action
+
+Name the class using PascalCase (e.g., UserManager)
+
+## Evidence
+
+- Pattern in namingConventions.classes: PascalCase
+
+---
+id: micai-instinct-constant-naming
+trigger: "When defining a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: miles-chu10/MicAI
+---
+
+# Micai Instinct Constant Naming
+
+## Action
+
+Name the constant using SCREAMING_SNAKE_CASE (e.g., MAX_RETRIES)
+
+## Evidence
+
+- Pattern in namingConventions.constants: SCREAMING_SNAKE_CASE
+
+---
+id: micai-instinct-import-style
+trigger: "When importing modules within the codebase"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: miles-chu10/MicAI
+---
+
+# Micai Instinct Import Style
+
+## Action
+
+Use relative import paths (e.g., import { X } from './X')
+
+## Evidence
+
+- Pattern in importStyle: relative
+
+---
+id: micai-instinct-export-style
+trigger: "When exporting modules or functions"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: miles-chu10/MicAI
+---
+
+# Micai Instinct Export Style
+
+## Action
+
+Use named exports (e.g., export function foo() {})
+
+## Evidence
+
+- Pattern in exportStyle: named
+
+---
+id: micai-instinct-commit-format
+trigger: "When writing a git commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: miles-chu10/MicAI
+---
+
+# Micai Instinct Commit Format
+
+## Action
+
+Use the conventional commit format with a prefix (e.g., docs: update README)
+
+## Evidence
+
+- Pattern in commits.type: conventional
+- Example: docs: polish public README and contributor landing
+
+---
+id: micai-instinct-commit-prefix-docs
+trigger: "When committing documentation changes"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: miles-chu10/MicAI
+---
+
+# Micai Instinct Commit Prefix Docs
+
+## Action
+
+Prefix the commit message with 'docs:'
+
+## Evidence
+
+- Pattern in commits.prefixes: docs
+- Example: docs: polish public README and contributor landing
+
+---
+id: micai-instinct-commit-length
+trigger: "When writing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: miles-chu10/MicAI
+---
+
+# Micai Instinct Commit Length
+
+## Action
+
+Keep the commit message concise, around 50 characters on average
+
+## Evidence
+
+- Pattern in commits.averageLength: 50
+
+---
+id: micai-instinct-test-location
+trigger: "When adding new tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: miles-chu10/MicAI
+---
+
+# Micai Instinct Test Location
+
+## Action
+
+Place test files in a separate location from source files
+
+## Evidence
+
+- Pattern in architecture.folderStructure.testLocation: separate
+
+---
+id: micai-instinct-docs-folder
+trigger: "When adding documentation"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: miles-chu10/MicAI
+---
+
+# Micai Instinct Docs Folder
+
+## Action
+
+Place documentation files in the 'docs' folder
+
+## Evidence
+
+- Pattern in architecture.folderStructure.commonFolders: docs
+
