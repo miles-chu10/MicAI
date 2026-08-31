@@ -46,6 +46,7 @@ struct PrimaryAppView: View {
         Label(section.title, systemImage: section.systemImage)
           .tag(section)
       }
+      .listStyle(.sidebar)
       .navigationTitle("MicAI")
       .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
       .safeAreaInset(edge: .bottom) {
@@ -68,6 +69,7 @@ struct PrimaryAppView: View {
           OnboardingView(appModel: appModel)
         }
     }
+    .navigationSplitViewStyle(.balanced)
   }
 
   @ViewBuilder
@@ -85,24 +87,37 @@ struct PrimaryAppView: View {
   }
 
   private var readinessFooter: some View {
-    VStack(alignment: .leading, spacing: 6) {
+    VStack(alignment: .leading, spacing: 10) {
       Divider()
-      Label(
-        appModel.readiness.dictation.isReady ? "Dictation ready" : "Setup required",
-        systemImage: appModel.readiness.dictation.isReady
-          ? "checkmark.circle.fill" : "exclamationmark.circle"
-      )
-      .font(.caption)
-      .foregroundStyle(
-        appModel.readiness.dictation.isReady ? Color.green : Color.secondary
-      )
-      Button("Review Setup") {
+      Label {
+        Text(
+          appModel.readiness.dictation.isReady
+            ? "Dictation ready" : "Setup required"
+        )
+      } icon: {
+        Image(
+          systemName: appModel.readiness.dictation.isReady
+            ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
+        )
+        .foregroundStyle(
+          appModel.readiness.dictation.isReady ? Color.green : Color.orange
+        )
+      }
+      .font(.callout)
+
+      Button {
         appModel.showOnboarding()
+      } label: {
+        Label(
+          appModel.readiness.dictation.isReady ? "Review Setup" : "Finish Setup",
+          systemImage: "checklist"
+        )
       }
       .buttonStyle(.link)
-      .font(.caption)
+      .controlSize(.small)
     }
-    .padding()
+    .padding(.horizontal, 14)
+    .padding(.bottom, 14)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(.bar)
   }
@@ -124,7 +139,11 @@ private struct OverviewView: View {
           .foregroundStyle(.secondary)
         }
 
-        HStack(alignment: .top, spacing: 16) {
+        LazyVGrid(
+          columns: [GridItem(.adaptive(minimum: 260), spacing: 16)],
+          alignment: .leading,
+          spacing: 16
+        ) {
           WorkflowCard(
             title: "Dictation",
             icon: "mic.fill",
@@ -142,25 +161,49 @@ private struct OverviewView: View {
           )
         }
 
+        GroupBox {
+          HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "lock.shield.fill")
+              .font(.title2)
+              .foregroundStyle(.tint)
+              .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+              Text("Private by default")
+                .font(.headline)
+              Text(
+                "Ordinary dictation stays on this Mac. MicAI contacts ChatGPT only when you explicitly invoke an AI Command."
+              )
+              .foregroundStyle(.secondary)
+            }
+          }
+          .padding(.vertical, 4)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .accessibilityElement(children: .combine)
+        }
+
         if let errorMessage = appModel.errorMessage {
-          Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-            .foregroundStyle(.orange)
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.orange.opacity(0.1), in: .rect(cornerRadius: 12))
+          Label {
+            Text(errorMessage)
+          } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+              .foregroundStyle(.orange)
+          }
+          .padding()
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(.orange.opacity(0.1), in: .rect(cornerRadius: 12))
         }
 
         if !appModel.settingsStore.hasSeenOnboarding
           || !appModel.readiness.dictation.isReady
         {
-          Button("Complete Setup") {
+          Button("Complete Setup", systemImage: "checklist") {
             appModel.showOnboarding()
           }
           .buttonStyle(.borderedProminent)
           .controlSize(.large)
         }
       }
-      .padding(32)
+      .padding(28)
       .frame(maxWidth: 900, alignment: .leading)
     }
   }
@@ -176,28 +219,39 @@ private struct WorkflowCard: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Label(title, systemImage: icon)
-        .font(.title2.weight(.semibold))
+        .font(.title3.bold())
       Text(shortcut)
-        .font(.system(.headline, design: .rounded))
+        .font(.system(.callout, design: .rounded).bold())
         .padding(.horizontal, 9)
         .padding(.vertical, 5)
         .background(.quaternary, in: .rect(cornerRadius: 7))
       Text(detail)
         .foregroundStyle(.secondary)
-      Spacer(minLength: 0)
-      Label(
-        ready.isReady ? "Ready" : "\(ready.blockers.count) setup item(s)",
-        systemImage: ready.isReady ? "checkmark.circle.fill" : "circle.dashed"
-      )
-      .foregroundStyle(ready.isReady ? Color.green : Color.secondary)
+      Spacer(minLength: 12)
+      if ready.isReady {
+        Label {
+          Text("Ready")
+        } icon: {
+          Image(systemName: "checkmark.circle.fill")
+            .foregroundStyle(.green)
+        }
+      } else {
+        Label {
+          Text("^[\(ready.blockers.count) setup item](inflect: true)")
+        } icon: {
+          Image(systemName: "exclamationmark.circle.fill")
+            .foregroundStyle(.orange)
+        }
+      }
     }
     .padding(20)
-    .frame(maxWidth: .infinity, minHeight: 210, alignment: .leading)
+    .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
     .background(.background, in: .rect(cornerRadius: 14))
     .overlay {
       RoundedRectangle(cornerRadius: 14)
         .stroke(.separator, lineWidth: 1)
     }
+    .accessibilityElement(children: .combine)
   }
 }
 
@@ -212,7 +266,10 @@ private struct DictationView: View {
           title: "Local dictation",
           subtitle: "Audio stays on this Mac and is transcribed with Parakeet TDT v2."
         )
-        ReadinessList(readiness: appModel.readiness.dictation)
+        ReadinessList(
+          readiness: appModel.readiness.dictation,
+          reviewSetup: appModel.showOnboarding
+        )
         GroupBox("How to dictate") {
           VStack(alignment: .leading, spacing: 10) {
             Text(
@@ -226,13 +283,17 @@ private struct DictationView: View {
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(.vertical, 6)
         }
-        ModelStatusView(
-          state: appModel.modelState,
-          transcript: nil,
-          prepare: appModel.prepareModel
-        )
+        GroupBox("Local speech model") {
+          ModelStatusView(
+            state: appModel.modelState,
+            transcript: nil,
+            prepare: appModel.prepareModel
+          )
+          .padding(.vertical, 6)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
       }
-      .padding(32)
+      .padding(28)
       .frame(maxWidth: 760, alignment: .leading)
     }
   }
@@ -259,11 +320,22 @@ private struct CommandsView: View {
           subtitle:
             "Only your spoken instruction and selected text are sent to the configured ChatGPT route."
         )
-        ReadinessList(readiness: appModel.readiness.command)
+        ReadinessList(
+          readiness: appModel.readiness.command,
+          reviewSetup: appModel.showOnboarding
+        )
         GroupBox("Provider") {
-          LabeledContent("ChatGPT subscription") {
-            Text(appModel.providerStatus.summary)
-              .multilineTextAlignment(.trailing)
+          VStack(alignment: .leading, spacing: 10) {
+            LabeledContent("Authentication", value: "ChatGPT sign-in")
+            LabeledContent("Status") {
+              Text(appModel.providerStatus.summary)
+                .multilineTextAlignment(.trailing)
+            }
+            Text(
+              "Subscription access comes from your existing Codex sign-in with ChatGPT."
+            )
+            .font(.footnote)
+            .foregroundStyle(.secondary)
           }
           .padding(.vertical, 6)
         }
@@ -281,7 +353,7 @@ private struct CommandsView: View {
         )
         .foregroundStyle(.secondary)
       }
-      .padding(32)
+      .padding(28)
       .frame(maxWidth: 760, alignment: .leading)
     }
   }
@@ -314,7 +386,7 @@ private struct ActivityView: View {
       }
       Spacer()
     }
-    .padding(32)
+    .padding(28)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 }
@@ -327,10 +399,11 @@ private struct FeatureHeader: View {
   var body: some View {
     HStack(alignment: .top, spacing: 14) {
       Image(systemName: icon)
-        .font(.system(size: 28))
+        .font(.title2)
         .foregroundStyle(.tint)
-        .frame(width: 42, height: 42)
+        .padding(10)
         .background(.tint.opacity(0.12), in: .rect(cornerRadius: 10))
+        .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 4) {
         Text(title)
           .font(.title.weight(.semibold))
@@ -338,24 +411,37 @@ private struct FeatureHeader: View {
           .foregroundStyle(.secondary)
       }
     }
+    .accessibilityElement(children: .combine)
   }
 }
 
 private struct ReadinessList: View {
   let readiness: FeatureReadiness
+  let reviewSetup: () -> Void
 
   var body: some View {
     GroupBox(readiness.isReady ? "Ready" : "Before you begin") {
       if readiness.isReady {
-        Label("All required services are ready.", systemImage: "checkmark.circle.fill")
-          .foregroundStyle(.green)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(.vertical, 6)
+        Label {
+          Text("All required services are ready.")
+        } icon: {
+          Image(systemName: "checkmark.circle.fill")
+            .foregroundStyle(.green)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 6)
       } else {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
           ForEach(readiness.blockers, id: \.self) { blocker in
-            Label(blocker.message, systemImage: "circle")
+            Label {
+              Text(blocker.message)
+            } icon: {
+              Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+            }
           }
+          Divider()
+          Button("Review Setup", systemImage: "checklist", action: reviewSetup)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 6)

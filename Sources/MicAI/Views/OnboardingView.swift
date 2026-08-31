@@ -31,36 +31,53 @@ struct OnboardingView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      HStack(spacing: 6) {
-        ForEach(OnboardingStep.allCases, id: \.rawValue) { item in
-          Capsule()
-            .fill(
-              item.rawValue <= step.rawValue
-                ? Color.accentColor : Color.secondary.opacity(0.18)
-            )
-            .frame(height: 5)
+      VStack(alignment: .leading, spacing: 8) {
+        HStack {
+          Text("Step \(step.rawValue + 1) of \(OnboardingStep.allCases.count)")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+          Spacer()
+          Text("MicAI setup")
+            .font(.callout)
+            .foregroundStyle(.secondary)
         }
+        ProgressView(
+          value: Double(step.rawValue + 1),
+          total: Double(OnboardingStep.allCases.count)
+        )
+        .accessibilityLabel("Setup progress")
+        .accessibilityValue(
+          "Step \(step.rawValue + 1) of \(OnboardingStep.allCases.count)"
+        )
       }
-      .padding(24)
+      .padding(.horizontal, 32)
+      .padding(.vertical, 20)
 
-      VStack(alignment: .leading, spacing: 20) {
-        Text(step.title)
-          .font(.largeTitle.weight(.semibold))
-        stepContent
-        Spacer()
+      Divider()
+
+      ScrollView {
+        VStack(alignment: .leading, spacing: 20) {
+          Text(step.title)
+            .font(.title.bold())
+          stepContent
+        }
+        .padding(.horizontal, 36)
+        .padding(.vertical, 28)
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .padding(.horizontal, 36)
-      .padding(.bottom, 28)
 
       Divider()
       HStack {
         if step != .welcome {
-          Button("Back") {
+          Button("Back", systemImage: "chevron.left") {
             move(by: -1)
           }
         }
         Spacer()
-        Button(step == .commands ? "Finish for Now" : "Continue") {
+        Button(
+          step == .commands ? "Finish for Now" : "Continue",
+          systemImage: step == .commands ? "checkmark" : "chevron.right"
+        ) {
           if step == .commands {
             appModel.dismissOnboarding()
             dismiss()
@@ -73,7 +90,7 @@ struct OnboardingView: View {
       }
       .padding(20)
     }
-    .frame(width: 620, height: 500)
+    .frame(width: 640, height: 540)
     .interactiveDismissDisabled()
   }
 
@@ -163,7 +180,7 @@ struct OnboardingView: View {
   private var commandStep: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text(
-        "AI Commands use your existing Codex CLI sign-in at command time. MicAI treats that credential as read-only and never displays or stores its values."
+        "AI Commands use your existing Codex sign-in with ChatGPT for subscription access. MicAI treats that credential as read-only and never displays or stores its values."
       )
       LabeledContent(
         "Command hotkey",
@@ -209,6 +226,12 @@ struct OnboardingView: View {
 private struct IntroStep: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
+      Image(systemName: "mic.and.signal.meter.fill")
+        .font(.largeTitle)
+        .foregroundStyle(.tint)
+        .padding(16)
+        .background(.tint.opacity(0.12), in: .rect(cornerRadius: 16))
+        .accessibilityHidden(true)
       Label(
         "Dictate locally in any app",
         systemImage: "mic.and.signal.meter.fill"
@@ -235,10 +258,13 @@ private struct StatusLine: View {
   let ready: Bool
 
   var body: some View {
-    Label(
-      title,
-      systemImage: ready ? "checkmark.circle.fill" : "exclamationmark.circle"
-    )
-    .foregroundStyle(ready ? Color.green : Color.orange)
+    Label {
+      Text(title)
+    } icon: {
+      Image(
+        systemName: ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
+      )
+      .foregroundStyle(ready ? Color.green : Color.orange)
+    }
   }
 }

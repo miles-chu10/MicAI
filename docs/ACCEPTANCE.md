@@ -18,7 +18,7 @@ used to prepare this ledger.
 | 3 | Holding the dictation hotkey records; release transcribes locally with Parakeet and inserts into TextEdit within about two seconds for a 10-second utterance. | **UNVERIFIED-MANUAL** | The audio → local ASR → cleanup → exact-target guarded insertion path compiles and its fake-boundary tests pass. No model was downloaded, no audio was recorded, and no TextEdit or latency trial was performed. Follow Manual runbook B, including hold and toggle trials. |
 | 4 | Selected text plus the spoken command “make this uppercase” replaces it using ChatGPT-subscription OAuth. | **UNVERIFIED-MANUAL** | Request/auth/SSE behavior is fake-transport tested, including true incremental byte streaming, cancellation, timeout, early EOF, completion, and one 401 credential reload. No credential contents were accessed and no authenticated request was made. Follow Manual runbook C. |
 | 5 | Escape cancels recording without inserting anything. | **UNVERIFIED-MANUAL** | Core cancellation and stale-result suppression tests pass, and the HUD/cross-phase Esc path is wired. Real global Esc, recording, ASR wait, LLM wait, HUD focus, and zero-insertion behavior were not exercised. Follow Manual runbook D. |
-| 6 | `bash scripts/codex-test.sh` passes MicAICore tests covering command routing, auth parsing, and injected clipboard restoration. | **PASS** | Final run on 2026-07-27 passed 79 tests in 13 suites. Existing suites include `CommandEngineTests`, `CodexAuthFileLoaderTests`, `TextInsertionCoordinatorTests`, and the new streaming client cases. |
+| 6 | `bash scripts/codex-test.sh` passes MicAICore tests covering command routing, auth parsing, and injected clipboard restoration. | **PASS** | Final run on 2026-07-27 passed 83 tests in 13 suites. Existing suites include `CommandEngineTests`, `CodexAuthFileLoaderTests`, `TextInsertionCoordinatorTests`, and the new streaming client cases. |
 | 7 | No secrets are stored in the repo; `dist/` and `.build/` stay absent from `git status`. | **PASS** | No credential was read, printed, copied, or modified. Settings serialization tests exclude secret/transient fields. `git status --short` showed source/workflow changes but no `.build/` or `dist/` artifacts; both remain ignored. The production credential path remains read-only runtime input. |
 
 ## Manual verification runbook
@@ -123,7 +123,7 @@ credential values, request bodies, or token/path contents.
 
 All four required scripts passed on 2026-07-27:
 
-- `bash scripts/codex-test.sh`: PASS — 79 tests in 13 suites.
+- `bash scripts/codex-test.sh`: PASS — 83 tests in 13 suites.
 - `bash scripts/codex-typecheck.sh`: PASS — debug build completed.
 - `bash scripts/codex-lint.sh`: PASS — strict format lint exited zero.
 - `bash scripts/codex-build.sh`: PASS — release build assembled and ad-hoc
