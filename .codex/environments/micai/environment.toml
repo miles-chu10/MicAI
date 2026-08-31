@@ -1,0 +1,44 @@
+version = 1
+name = "MicAI SwiftPM"
+
+[setup]
+script = '''
+set -euo pipefail
+cd "${CODEX_WORKTREE_PATH:-$PWD}"
+bash scripts/codex-environment.sh setup
+'''
+
+[[actions]]
+name = "Environment Check"
+icon = "tool"
+command = 'cd "${CODEX_WORKTREE_PATH:-$PWD}" && bash scripts/codex-environment.sh check'
+
+[[actions]]
+name = "Setup"
+icon = "run"
+command = 'cd "${CODEX_WORKTREE_PATH:-$PWD}" && bash scripts/codex-environment.sh setup'
+
+[[actions]]
+name = "Run"
+icon = "run"
+command = 'cd "${CODEX_WORKTREE_PATH:-$PWD}" && bash scripts/codex-run.sh'
+
+[[actions]]
+name = "Build"
+icon = "test"
+command = 'cd "${CODEX_WORKTREE_PATH:-$PWD}" && bash scripts/codex-build.sh'
+
+[[actions]]
+name = "Test"
+icon = "test"
+command = 'cd "${CODEX_WORKTREE_PATH:-$PWD}" && bash scripts/codex-test.sh'
+
+[[actions]]
+name = "Lint"
+icon = "test"
+command = 'cd "${CODEX_WORKTREE_PATH:-$PWD}" && bash scripts/codex-lint.sh'
+
+[[actions]]
+name = "Typecheck"
+icon = "test"
+command = 'cd "${CODEX_WORKTREE_PATH:-$PWD}" && bash scripts/codex-typecheck.sh'
