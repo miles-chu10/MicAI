@@ -12,12 +12,22 @@ struct MenuContentView: View {
     }
     .keyboardShortcut("0", modifiers: .command)
 
+    Button("History…") {
+      NSApplication.shared.activate(ignoringOtherApps: true)
+      openWindow(id: "history")
+    }
+    .keyboardShortcut("y", modifiers: [.command, .shift])
+
     Divider()
 
     Label(
       appModel.operationPhase.displayName,
       systemImage: appModel.operationPhase.systemImage
     )
+
+    if appModel.settingsStore.settings.privacyMode {
+      Label("Privacy mode — nothing leaves this Mac", systemImage: "hand.raised.fill")
+    }
 
     if appModel.isOperationActive {
       Button("Cancel Current Operation") {
@@ -61,6 +71,11 @@ struct MicAICommands: Commands {
     }
 
     CommandMenu("Dictation") {
+      Button("History…") {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        openWindow(id: "history")
+      }
+
       Button("Cancel Current Operation") {
         appModel.cancelCurrentOperation()
       }

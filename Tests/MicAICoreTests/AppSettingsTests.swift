@@ -122,3 +122,96 @@ struct AppSettingsTests {
     #expect(try JSONDecoder().decode(AppSettings.self, from: data) == settings)
   }
 }
+
+@Suite
+struct AppSettingsCompatibilityTests {
+  @Test
+  func settingsSavedBeforeTheseFeaturesExistedStillDecode() throws {
+    // A build that predates refinement wrote only these four keys. Decoding
+    // must fill in defaults rather than throw, which would silently reset the
+    // user's hotkeys back to stock.
+    let legacy = """
+      {
+        "dictationHotkey": { "keyCode": 61, "modifiers": [] },
+        "dictationActivationMode": "hold",
+        "llmModel": "gpt-5-codex"
+      }
+      """
+    let data = try #require(legacy.data(using: .utf8))
+
+    let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+    #expect(settings.dictationHotkey == .rightOption)
+    #expect(settings.llmModel == "gpt-5-codex")
+    #expect(settings.refinementEnabled)
+    #expect(!settings.privacyMode)
+    #expect(settings.historyEnabled)
+    #expect(settings.defaultTone == .neutral)
+    #expect(settings.styleOverrides.isEmpty)
+  }
+
+  @Test
+  func newFieldsSurviveARoundTrip() throws {
+    var settings = AppSettings.defaults
+    settings.privacyMode = true
+    settings.refinementEnabled = false
+    settings.defaultTone = .professional
+    settings.styleOverrides = ["com.example.app": .technical]
+    settings.historyLimit = 50
+
+    let decoded = try JSONDecoder().decode(
+      AppSettings.self,
+      from: try JSONEncoder().encode(settings)
+    )
+
+    #expect(decoded == settings)
+  }
+
+  @Test
+  func refinementIsInactiveWithoutAModel() {
+    var settings = AppSettings.defaults
+    settings.refinementEnabled = true
+
+    #expect(!settings.isRefinementActive)
+
+    settings.llmModel = "gpt-5-codex"
+    #expect(settings.isRefinementActive)
+  }
+
+  @Test
+  func privacyModeSuppressesRefinementAndCommandsWithoutEditingThem() {
+    var settings = AppSettings.defaults
+    settings.llmModel = "gpt-5-codex"
+    settings.commandHotkey = .controlOptionSpace
+    settings.privacyMode = true
+
+    #expect(!settings.isRefinementActive)
+    #expect(!settings.areCommandsActive)
+    // The user's own choices are untouched, so turning privacy mode off
+    // restores them rather than requiring them to be set up again.
+    #expect(settings.refinementEnabled)
+    #expect(settings.commandHotkey == .controlOptionSpace)
+  }
+
+  @Test
+  func commandHotkeyWithoutAModelIsAllowedInPrivacyMode() throws {
+    // Outside privacy mode this combination is a validation error, because a
+    // command with no model does nothing. In privacy mode commands are off
+    // anyway, so the missing model is not a problem to report.
+    var settings = AppSettings.defaults
+    settings.commandHotkey = .controlOptionSpace
+    settings.privacyMode = true
+
+    #expect(throws: Never.self) { try settings.validated() }
+  }
+
+  @Test
+  func historyLimitIsClampedToASaneRange() throws {
+    var settings = AppSettings.defaults
+    settings.historyLimit = 0
+    #expect(try settings.validated().historyLimit == 1)
+
+    settings.historyLimit = 99_999
+    #expect(try settings.validated().historyLimit == 2_000)
+  }
+}

@@ -36,6 +36,12 @@ struct MicAIApp: App {
       MicAICommands(appModel: appModel)
     }
 
+    Window("History", id: "history") {
+      HistoryView(appModel: appModel)
+    }
+    .defaultSize(width: 860, height: 520)
+    .defaultPosition(.center)
+
     MenuBarExtra("MicAI", systemImage: "mic.fill") {
       MenuContentView(appModel: appModel)
     }

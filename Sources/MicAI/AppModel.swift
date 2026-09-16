@@ -10,6 +10,10 @@ final class AppModel: ObservableObject {
   @Published private(set) var lastTranscript: String?
   @Published private(set) var errorMessage: String?
   @Published private(set) var providerStatus: ProviderStatus = .notConfigured
+  @Published private(set) var historyEntries: [HistoryEntry] = []
+  @Published private(set) var vocabularyEntries: [VocabularyEntry] = []
+  /// Tone applied to the most recent dictation, shown in the HUD and history.
+  @Published private(set) var lastTone: StyleTone?
   @Published var isOnboardingPresented = false
 
   let settingsStore: SettingsStore
@@ -25,6 +29,9 @@ final class AppModel: ObservableObject {
   private let insertionCoordinator: TextInsertionCoordinator
   private let hudController: RecordingHUDController
   private let providerStatusRelay: ProviderStatusRelay
+  private let vocabularyStore: VocabularyStore
+  private let historyStore: TranscriptHistoryStore
+  private let composer: DictationComposer
   private var operationID: UUID?
   private var operationAttemptID: UUID?
   private var operationStartupMode: MicAIMode?
@@ -71,16 +78,41 @@ final class AppModel: ObservableObject {
       targetValidator: targetTracker
     )
     self.insertionCoordinator = insertionCoordinator
+    // One client for both paths, so a 401 refresh or a rate-limit status seen
+    // by refinement is the same status AI Commands reports.
+    let llmClient = ChatGPTResponsesClient(
+      credentialLoader: CodexAuthFileLoader(),
+      statusHandler: providerStatusRelay.send
+    )
     commandPipeline = CommandPipeline(
       dictationPipeline: pipeline,
-      commandEngine: CommandEngine(
-        transformer: ChatGPTResponsesClient(
-          credentialLoader: CodexAuthFileLoader(),
-          statusHandler: providerStatusRelay.send
-        )
-      ),
+      commandEngine: CommandEngine(transformer: llmClient),
       insertionCoordinator: insertionCoordinator,
       coordinator: coordinator
+    )
+    // Falls back to a temp-directory store if Application Support is
+    // unavailable, so a sandbox or disk problem cannot stop dictation.
+    let vocabularyStore =
+      (try? VocabularyStore.applicationSupport())
+      ?? VocabularyStore(
+        file: FileManager.default.temporaryDirectory
+          .appendingPathComponent("MicAI-vocabulary.json")
+      )
+    let historyStore =
+      (try? TranscriptHistoryStore.applicationSupport(
+        limit: settingsStore.settings.historyLimit
+      ))
+      ?? TranscriptHistoryStore(
+        file: FileManager.default.temporaryDirectory
+          .appendingPathComponent("MicAI-history.json"),
+        limit: settingsStore.settings.historyLimit
+      )
+    self.vocabularyStore = vocabularyStore
+    self.historyStore = historyStore
+    composer = DictationComposer(
+      refiner: RefinementEngine(transformer: llmClient),
+      vocabulary: vocabularyStore,
+      history: historyStore
     )
     isOnboardingPresented = !settingsStore.hasSeenOnboarding
     let observedPublishers = [
@@ -117,6 +149,7 @@ final class AppModel: ObservableObject {
       self?.refreshSystemStatus()
       self?.refreshProviderStatus()
       self?.hotkeyMonitor.start()
+      await self?.loadStoredCollections()
       await self?.prepareCachedModelIfAvailable()
     }
   }
@@ -328,6 +361,27 @@ final class AppModel: ObservableObject {
     inputLevel = 0
     do {
       let transcript = try await pipeline.finish(operationID: operationID)
+
+      let settings = settingsStore.settings
+      if settings.isRefinementActive,
+        await coordinator.markAwaitingLLM(operationID: operationID)
+      {
+        operationPhase = .awaitingLLM
+      }
+
+      // Never throws: on any refinement failure this returns the raw
+      // transcript, so a network problem costs polish, not the dictation.
+      let composed = await composer.compose(
+        transcript: transcript,
+        mode: .dictation,
+        target: target,
+        settings: settings
+      )
+      guard await coordinator.isCurrent(operationID: operationID) else {
+        throw MicAIError.cancelled
+      }
+      await refreshStoredCollections()
+
       guard await coordinator.markInserting(operationID: operationID) else {
         throw MicAIError.cancelled
       }
@@ -340,7 +394,7 @@ final class AppModel: ObservableObject {
       do {
         let coordinator = self.coordinator
         try await insertionCoordinator.apply(
-          .insert(transcript.text),
+          .insert(composed.text),
           to: target,
           while: {
             await coordinator.isCurrent(operationID: operationID)
@@ -350,14 +404,14 @@ final class AppModel: ObservableObject {
         guard await coordinator.complete(operationID: operationID) else {
           throw MicAIError.cancelled
         }
-        complete(transcript: transcript, diagnostic: error.localizedDescription)
+        complete(composed: composed, diagnostic: error.localizedDescription)
         return
       }
 
       guard await coordinator.complete(operationID: operationID) else {
         throw MicAIError.cancelled
       }
-      complete(transcript: transcript)
+      complete(composed: composed)
     } catch {
       let micAIError = (error as? MicAIError) ?? .insertionFailed
       if micAIError == .cancelled,
@@ -530,6 +584,7 @@ final class AppModel: ObservableObject {
         throw MicAIError.cancelled
       }
       providerStatus = .readyToAttempt
+      await recordCommandHistory(result: result, target: target)
       complete(transcript: result.instruction)
     } catch {
       let micAIError = (error as? MicAIError) ?? .llmServerFailure
@@ -564,6 +619,89 @@ final class AppModel: ObservableObject {
     errorMessage = diagnostic
     operationPhase = .idle
     clearOperation()
+  }
+
+  private func complete(composed: ComposedDictation, diagnostic: String? = nil) {
+    lastTranscript = composed.text
+    lastTone = composed.tone
+    // A refinement failure is worth surfacing, but it must not mask a real
+    // insertion diagnostic, which is the more actionable of the two.
+    errorMessage = diagnostic ?? composed.refinementFailure?.localizedDescription
+    operationPhase = .idle
+    clearOperation()
+  }
+
+  // MARK: - History and vocabulary
+
+  /// Commands share the history list with dictation, so "where did that text
+  /// go" has one place to look rather than two.
+  private func recordCommandHistory(
+    result: CommandResult,
+    target: TargetIdentity
+  ) async {
+    guard settingsStore.settings.historyEnabled else {
+      return
+    }
+
+    await historyStore.record(
+      HistoryEntry(
+        mode: .command,
+        rawTranscript: result.instruction.text,
+        finalText: result.intent.text,
+        applicationName: target.applicationName,
+        bundleIdentifier: target.bundleIdentifier,
+        audioDuration: result.instruction.audioDuration,
+        refined: true
+      )
+    )
+    await refreshStoredCollections()
+  }
+
+  private func loadStoredCollections() async {
+    await vocabularyStore.load()
+    await historyStore.load()
+    await refreshStoredCollections()
+  }
+
+  private func refreshStoredCollections() async {
+    historyEntries = await historyStore.all()
+    vocabularyEntries = await vocabularyStore.all()
+  }
+
+  /// Saves a user edit from the history list and learns the terms it implies.
+  func correctHistoryEntry(id: UUID, to correctedText: String) {
+    Task { @MainActor in
+      await composer.applyCorrection(historyEntryID: id, correctedText: correctedText)
+      await refreshStoredCollections()
+    }
+  }
+
+  func deleteHistoryEntry(id: UUID) {
+    Task { @MainActor in
+      await historyStore.delete(entryID: id)
+      await refreshStoredCollections()
+    }
+  }
+
+  func clearHistory() {
+    Task { @MainActor in
+      await historyStore.clear()
+      await refreshStoredCollections()
+    }
+  }
+
+  func upsertVocabularyEntry(heard: String, written: String) {
+    Task { @MainActor in
+      await vocabularyStore.upsert(VocabularyEntry(heard: heard, written: written))
+      await refreshStoredCollections()
+    }
+  }
+
+  func deleteVocabularyEntry(id: UUID) {
+    Task { @MainActor in
+      await vocabularyStore.delete(entryID: id)
+      await refreshStoredCollections()
+    }
   }
 
   private func clearOperation(ifAttemptID expectedAttemptID: UUID? = nil) {

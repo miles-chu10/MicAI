@@ -3,6 +3,27 @@ import SwiftUI
 
 struct SettingsView: View {
   @ObservedObject var appModel: AppModel
+
+  var body: some View {
+    TabView {
+      GeneralSettingsView(appModel: appModel)
+        .tabItem { Label("General", systemImage: "gearshape") }
+
+      StyleSettingsView(appModel: appModel)
+        .tabItem { Label("Style", systemImage: "wand.and.stars") }
+
+      VocabularySettingsView(appModel: appModel)
+        .tabItem { Label("Vocabulary", systemImage: "character.book.closed") }
+
+      PrivacySettingsView(appModel: appModel)
+        .tabItem { Label("Privacy", systemImage: "hand.raised") }
+    }
+    .frame(width: 560, height: 620)
+  }
+}
+
+struct GeneralSettingsView: View {
+  @ObservedObject var appModel: AppModel
   @ObservedObject private var store: SettingsStore
   @State private var draft: AppSettings
 
@@ -123,7 +144,6 @@ struct SettingsView: View {
     }
     .formStyle(.grouped)
     .padding()
-    .frame(width: 540, height: 600)
     .onAppear {
       draft = store.settings
     }
