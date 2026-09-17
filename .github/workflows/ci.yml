@@ -14,9 +14,7 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore: ["docs/**", "**.md"]
   pull_request:
-    paths-ignore: ["docs/**", "**.md"]
   workflow_dispatch:
 
 # Nothing here writes to the repository; checkout is the only token consumer.

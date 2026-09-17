@@ -110,18 +110,23 @@ interfaces, so adding a sync backend later does not require a rewrite.
 
 ## Verification status
 
-**Not compiled or tested.** The implementation environment has no Swift
-toolchain, and the package is macOS-only (FluidAudio, AVFoundation, AppKit).
-Run on a Mac:
+Verified by CI on a macOS runner (`.github/workflows/ci.yml`): the package
+compiles, 128 tests pass, `dist/MicAI.app` builds and codesigns, and the build
+leaves the working tree clean. That covers acceptance criteria 1, 6 and 7 in
+`docs/BRIEF.md`.
 
-```bash
-bash scripts/codex-test.sh
-bash scripts/codex-build.sh
-```
+The first CI run found a real bug that reading the code had not: `isUsable`
+compared a vocabulary entry's two sides case-INSENSITIVELY, so `"slack"` ->
+`"Slack"` was discarded as a no-op. Capitalizing a proper noun the recognizer
+lowercased is the most common correction the feature exists to make, so the
+filter was rejecting its primary use case.
 
-New test suites: `AppStyleResolverTests`, `VocabularyApplierTests`,
-`VocabularyLearnerTests`, `RefinementEngineTests`, `DictationComposerTests`,
-`AppSettingsCompatibilityTests`.
+**CI cannot verify the product.** Criteria 2-5 -- onboarding and permissions,
+hold-to-dictate landing text at the cursor within ~2s, a spoken command
+replacing a selection, Esc cancelling cleanly -- all need a human at a Mac. A
+runner has no microphone, cannot grant Accessibility, and never downloads the
+Parakeet model. Green CI here means "it compiles and the units behave", not
+"dictation works".
 
 ## Open questions
 
