@@ -31,12 +31,17 @@ public struct VocabularyEntry: Codable, Equatable, Sendable, Identifiable {
 
   /// An entry is usable only if it has a non-empty trigger and actually changes
   /// something. A no-op entry would burn a regex pass on every dictation.
+  ///
+  /// The comparison is case-SENSITIVE on purpose. "slack" -> "Slack" changes the
+  /// text, and capitalizing a proper noun the recognizer lowercased is the most
+  /// common correction this feature exists to make; a case-insensitive check
+  /// would throw exactly those entries away.
   public var isUsable: Bool {
     let trimmedHeard = heard.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmedWritten = written.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedHeard.isEmpty, !trimmedWritten.isEmpty else {
       return false
     }
-    return trimmedHeard.caseInsensitiveCompare(trimmedWritten) != .orderedSame
+    return trimmedHeard != trimmedWritten
   }
 }

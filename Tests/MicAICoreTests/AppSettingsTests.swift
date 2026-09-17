@@ -117,6 +117,12 @@ struct AppSettingsTests {
           "commandHotkey",
           "dictationActivationMode",
           "llmModel",
+          "refinementEnabled",
+          "privacyMode",
+          "historyEnabled",
+          "historyLimit",
+          "defaultTone",
+          "styleOverrides",
         ]
     )
     #expect(try JSONDecoder().decode(AppSettings.self, from: data) == settings)

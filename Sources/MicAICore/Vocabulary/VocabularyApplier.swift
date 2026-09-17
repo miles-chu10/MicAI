@@ -29,9 +29,8 @@ public struct VocabularyApplier: Sendable {
 
     // Longest trigger first: "parakeet tdt" must win over "parakeet", otherwise
     // the shorter entry rewrites the prefix and the longer one stops matching.
-    let usableEntries = entries
-      .filter(\.isUsable)
-      .sorted { $0.heard.count > $1.heard.count }
+    let usable = entries.filter(\.isUsable)
+    let usableEntries = usable.sorted { $0.heard.count > $1.heard.count }
 
     for entry in usableEntries {
       let heard = entry.heard.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -51,12 +50,16 @@ public struct VocabularyApplier: Sendable {
         continue
       }
 
-      result = regex.stringByReplacingMatches(
+      let replaced = regex.stringByReplacingMatches(
         in: result,
         options: [],
         range: range,
         withTemplate: NSRegularExpression.escapedTemplate(for: written)
       )
+      guard replaced != result else {
+        continue
+      }
+      result = replaced
       appliedEntryIDs.append(entry.id)
     }
 
@@ -73,17 +76,14 @@ public struct VocabularyApplier: Sendable {
     entries: [VocabularyEntry],
     limit: Int = 40
   ) -> String? {
-    let usableEntries = entries
-      .filter(\.isUsable)
-      .sorted { $0.hitCount > $1.hitCount }
-      .prefix(limit)
+    let ranked = entries.filter(\.isUsable).sorted { $0.hitCount > $1.hitCount }
+    let usableEntries = ranked.prefix(limit)
     guard !usableEntries.isEmpty else {
       return nil
     }
 
-    let terms = usableEntries
-      .map { "\"\($0.heard)\" -> \"\($0.written)\"" }
-      .joined(separator: ", ")
+    let pairs = usableEntries.map { "\"\($0.heard)\" -> \"\($0.written)\"" }
+    let terms = pairs.joined(separator: ", ")
     return
       "Known corrections for this speaker, apply when the audio clearly meant "
       + "the left-hand form: \(terms)."

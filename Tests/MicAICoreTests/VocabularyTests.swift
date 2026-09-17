@@ -40,12 +40,35 @@ struct VocabularyApplierTests {
     let entries = [
       VocabularyEntry(heard: "slack", written: "Slack"),
       VocabularyEntry(heard: "  ", written: "nothing"),
-      VocabularyEntry(heard: "same", written: "SAME"),
+      VocabularyEntry(heard: "same", written: "same"),
     ]
     let result = applier.apply("post to slack about same", entries: entries)
 
     #expect(result.text == "post to Slack about same")
     #expect(result.appliedEntryIDs.count == 1)
+  }
+
+  @Test
+  func capitalizationOnlyCorrectionIsApplied() {
+    // Fixing a proper noun the recognizer lowercased is the most common reason
+    // to add an entry at all; it must not be filtered out as a no-op.
+    let entries = [VocabularyEntry(heard: "slack", written: "Slack")]
+    let result = applier.apply("ping me on slack", entries: entries)
+
+    #expect(result.text == "ping me on Slack")
+    #expect(result.appliedEntryIDs == [entries[0].id])
+  }
+
+  @Test
+  func entryThatChangesNothingInPracticeIsNotCountedAsAHit() {
+    // Matching is case-insensitive, so this entry fires on text that already
+    // reads "Slack". The substitution is a no-op, so it must not inflate the
+    // entry's usage count in Settings.
+    let entries = [VocabularyEntry(heard: "slack", written: "Slack")]
+    let result = applier.apply("ping me on Slack", entries: entries)
+
+    #expect(result.text == "ping me on Slack")
+    #expect(result.appliedEntryIDs.isEmpty)
   }
 
   @Test
@@ -132,8 +155,12 @@ struct VocabularyLearnerTests {
 
   @Test
   func caseOnlyChangeIsNotAProposal() {
-    // The diff matches case-insensitively, so this aligns with no replacement
-    // block — capitalization is refinement's job, not vocabulary's.
+    // Deliberate asymmetry with VocabularyEntry.isUsable, which DOES accept a
+    // case-only entry when typed by hand. The learner's diff stays
+    // case-insensitive because a case-sensitive one would also propose
+    // "we" -> "We" from ordinary sentence-start capitalization, and that entry
+    // would then uppercase "we" mid-sentence everywhere. Typing "slack" ->
+    // "Slack" in Settings is precise; inferring it from a diff is not.
     #expect(learner.proposals(original: "slack thread", corrected: "Slack thread").isEmpty)
   }
 }

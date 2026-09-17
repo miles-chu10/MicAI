@@ -9,10 +9,6 @@ import Foundation
 struct JSONCollectionFile<Element: Codable & Sendable>: Sendable {
   let url: URL
 
-  init(url: URL) {
-    self.url = url
-  }
-
   /// `Application Support/MicAI/<name>`, creating the directory if needed.
   static func inApplicationSupport(named name: String) throws -> JSONCollectionFile {
     let base = try FileManager.default.url(
