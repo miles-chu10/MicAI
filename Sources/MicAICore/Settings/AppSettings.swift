@@ -31,6 +31,23 @@ public struct Hotkey: Codable, Hashable, Sendable {
     keyCode: 49,
     modifiers: [.command, .shift]
   )
+  public static let controlOptionT = Hotkey(
+    keyCode: 17,
+    modifiers: [.control, .option]
+  )
+  public static let controlOptionA = Hotkey(
+    keyCode: 0,
+    modifiers: [.control, .option]
+  )
+
+  /// Virtual key codes to labels, for the ones offered in Settings. Values are
+  /// Carbon `kVK_ANSI_*` constants; anything unlisted falls back to its number
+  /// rather than guessing at a character that depends on keyboard layout.
+  static let keyNames: [UInt16: String] = [
+    0: "A",
+    17: "T",
+    49: "Space",
+  ]
 
   public var keyCode: UInt16
   public var modifiers: Set<HotkeyModifier>
@@ -48,7 +65,7 @@ public struct Hotkey: Codable, Hashable, Sendable {
     let modifierNames = HotkeyModifier.displayOrder.compactMap { modifier in
       modifiers.contains(modifier) ? modifier.symbol : nil
     }
-    let keyName = keyCode == 49 ? "Space" : "Key \(keyCode)"
+    let keyName = Self.keyNames[keyCode] ?? "Key \(keyCode)"
     return modifierNames.joined() + keyName
   }
 }
@@ -57,6 +74,7 @@ public enum AppSettingsValidationError: Error, Equatable, Sendable {
   case emptyModel
   case duplicateHotkeys
   case unusableHotkey
+  case emptyTargetLanguage
 }
 
 extension AppSettingsValidationError: LocalizedError {
@@ -68,6 +86,8 @@ extension AppSettingsValidationError: LocalizedError {
       "Dictation and command hotkeys must be different."
     case .unusableHotkey:
       "Choose a supported hotkey with modifiers."
+    case .emptyTargetLanguage:
+      "Enter a language to translate into."
     }
   }
 }
@@ -100,6 +120,19 @@ public struct AppSettings: Codable, Equatable, Sendable {
   /// over the built-in table in `AppStyleResolver`.
   public var styleOverrides: [String: StyleTone]
 
+  /// Hold to translate the selection, or what you say when nothing is selected.
+  public var translateHotkey: Hotkey?
+  /// Where translation lands, as a plain language name ("Spanish", "Japanese").
+  /// Free text rather than an enum: the model handles any language, and a fixed
+  /// list would be a maintenance burden that silently limits the feature.
+  public var translationTargetLanguage: String
+  /// Hold to ask a question, with the selection as context when there is one.
+  public var askHotkey: Hotkey?
+  /// Force every Ask AI result into the answer window. Off means the result is
+  /// routed by `AskIntentClassifier`: a question opens the window, anything
+  /// else is inserted at the cursor.
+  public var askAlwaysOpensWindow: Bool
+
   public init(
     dictationHotkey: Hotkey,
     commandHotkey: Hotkey?,
@@ -110,7 +143,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     historyEnabled: Bool = true,
     historyLimit: Int = TranscriptHistoryStore.defaultLimit,
     defaultTone: StyleTone = .neutral,
-    styleOverrides: [String: StyleTone] = [:]
+    styleOverrides: [String: StyleTone] = [:],
+    translateHotkey: Hotkey? = nil,
+    translationTargetLanguage: String = "",
+    askHotkey: Hotkey? = nil,
+    askAlwaysOpensWindow: Bool = false
   ) {
     self.dictationHotkey = dictationHotkey
     self.commandHotkey = commandHotkey
@@ -122,6 +159,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     self.historyLimit = historyLimit
     self.defaultTone = defaultTone
     self.styleOverrides = styleOverrides
+    self.translateHotkey = translateHotkey
+    self.translationTargetLanguage = translationTargetLanguage
+    self.askHotkey = askHotkey
+    self.askAlwaysOpensWindow = askAlwaysOpensWindow
   }
 
   // Decoded field by field with defaults rather than synthesized, so settings
@@ -150,6 +191,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
     styleOverrides =
       try container.decodeIfPresent([String: StyleTone].self, forKey: .styleOverrides)
       ?? [:]
+    translateHotkey = try container.decodeIfPresent(Hotkey.self, forKey: .translateHotkey)
+    translationTargetLanguage =
+      try container.decodeIfPresent(String.self, forKey: .translationTargetLanguage) ?? ""
+    askHotkey = try container.decodeIfPresent(Hotkey.self, forKey: .askHotkey)
+    askAlwaysOpensWindow =
+      try container.decodeIfPresent(Bool.self, forKey: .askAlwaysOpensWindow) ?? false
   }
 
   /// Refinement runs only with a model configured and privacy mode off.
@@ -165,26 +212,65 @@ public struct AppSettings: Codable, Equatable, Sendable {
     commandHotkey != nil && !privacyMode
   }
 
+  /// Translation needs the model and a destination language.
+  public var isTranslateActive: Bool {
+    translateHotkey != nil
+      && !privacyMode
+      && !trimmed(llmModel).isEmpty
+      && !trimmed(translationTargetLanguage).isEmpty
+  }
+
+  public var isAskActive: Bool {
+    askHotkey != nil && !privacyMode && !trimmed(llmModel).isEmpty
+  }
+
+  /// The hotkey bound to each mode, for the global monitor.
+  public func hotkey(for mode: MicAIMode) -> Hotkey? {
+    switch mode {
+    case .dictation:
+      dictationHotkey
+    case .command:
+      commandHotkey
+    case .translate:
+      translateHotkey
+    case .ask:
+      askHotkey
+    }
+  }
+
+  private func trimmed(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
   public func resolver() -> AppStyleResolver {
     AppStyleResolver(overrides: styleOverrides, defaultTone: defaultTone)
   }
 
   public func validated() throws -> AppSettings {
-    let trimmedModel = llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
-    if commandHotkey != nil, !privacyMode, trimmedModel.isEmpty {
+    let trimmedModel = trimmed(llmModel)
+    let trimmedLanguage = trimmed(translationTargetLanguage)
+    let llmModes: [Hotkey?] = [commandHotkey, translateHotkey, askHotkey]
+
+    if !privacyMode, trimmedModel.isEmpty, llmModes.contains(where: { $0 != nil }) {
       throw AppSettingsValidationError.emptyModel
     }
-    guard commandHotkey != dictationHotkey else {
+    if !privacyMode, translateHotkey != nil, trimmedLanguage.isEmpty {
+      throw AppSettingsValidationError.emptyTargetLanguage
+    }
+
+    // Every configured hotkey must be distinct: two modes on one chord means
+    // whichever the monitor happens to test first silently wins.
+    let configured = [dictationHotkey] + llmModes.compactMap { $0 }
+    guard Set(configured).count == configured.count else {
       throw AppSettingsValidationError.duplicateHotkeys
     }
-    guard Self.isUsable(dictationHotkey),
-      commandHotkey.map(Self.isUsable) ?? true
-    else {
+    guard configured.allSatisfy(Self.isUsable) else {
       throw AppSettingsValidationError.unusableHotkey
     }
 
     var validatedSettings = self
     validatedSettings.llmModel = trimmedModel
+    validatedSettings.translationTargetLanguage = trimmedLanguage
     validatedSettings.historyLimit = min(max(historyLimit, 1), 2_000)
     return validatedSettings
   }

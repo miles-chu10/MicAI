@@ -42,8 +42,19 @@ struct MicAIApp: App {
     .defaultSize(width: 860, height: 520)
     .defaultPosition(.center)
 
-    MenuBarExtra("MicAI", systemImage: "mic.fill") {
+    Window("Ask AI", id: "answer") {
+      AskAnswerView(appModel: appModel)
+    }
+    .defaultSize(width: 520, height: 380)
+    .defaultPosition(.center)
+
+    // The label form is used deliberately: unlike the menu's content, the label
+    // view is always instantiated, so it is the one place in a menu-bar-only app
+    // that can hold an observer and still reach `openWindow`.
+    MenuBarExtra {
       MenuContentView(appModel: appModel)
+    } label: {
+      MenuBarLabel(appModel: appModel)
     }
 
     Settings {

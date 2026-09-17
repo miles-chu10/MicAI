@@ -14,6 +14,9 @@ final class AppModel: ObservableObject {
   @Published private(set) var vocabularyEntries: [VocabularyEntry] = []
   /// Tone applied to the most recent dictation, shown in the HUD and history.
   @Published private(set) var lastTone: StyleTone?
+  /// Set when an Ask AI result was a question rather than content. The answer
+  /// window observes this; nil means no answer is waiting.
+  @Published var pendingAnswer: AskAnswer?
   @Published var isOnboardingPresented = false
 
   let settingsStore: SettingsStore
@@ -32,6 +35,8 @@ final class AppModel: ObservableObject {
   private let vocabularyStore: VocabularyStore
   private let historyStore: TranscriptHistoryStore
   private let composer: DictationComposer
+  private let translationEngine: TranslationEngine
+  private let askEngine: AskEngine
   private var operationID: UUID?
   private var operationAttemptID: UUID?
   private var operationStartupMode: MicAIMode?
@@ -114,6 +119,11 @@ final class AppModel: ObservableObject {
       vocabulary: vocabularyStore,
       history: historyStore
     )
+    // Both take their per-call settings as arguments: they run off the main
+    // actor inside CommandPipeline, so the values are read on the main actor at
+    // the call site and passed down.
+    translationEngine = TranslationEngine(transformer: llmClient)
+    askEngine = AskEngine(transformer: llmClient)
     isOnboardingPresented = !settingsStore.hasSeenOnboarding
     let observedPublishers = [
       settingsStore.objectWillChange.eraseToAnyPublisher(),
@@ -257,12 +267,18 @@ final class AppModel: ObservableObject {
         await finishDictation()
       case (.dictation, .cancelRecording):
         await cancelDictation()
-      case (.command, .startRecording):
-        await startCommand()
+      case (.command, .startRecording), (.translate, .startRecording),
+        (.ask, .startRecording):
+        await startSelectionMode(mode)
       case (.command, .stopRecording):
         await finishCommand()
-      case (.command, .cancelRecording):
-        await cancelCommand()
+      case (.translate, .stopRecording):
+        await finishTranslate()
+      case (.ask, .stopRecording):
+        await finishAsk()
+      case (.command, .cancelRecording), (.translate, .cancelRecording),
+        (.ask, .cancelRecording):
+        await cancelSelectionMode(mode)
       }
     }
   }
@@ -439,42 +455,44 @@ final class AppModel: ObservableObject {
     clearOperation()
   }
 
-  private func startCommand() async {
+  /// Shared preamble for AI Commands, AI Translate and Ask AI.
+  ///
+  /// The three differ only in what happens after the transcript exists, so the
+  /// gates, permission checks and target capture live here once. Keeping three
+  /// near-identical copies is how one of them ends up missing a check.
+  private func startSelectionMode(_ mode: MicAIMode) async {
     guard operationID == nil, operationAttemptID == nil else {
-      hotkeyMonitor.reset(mode: .command)
+      hotkeyMonitor.reset(mode: mode)
       return
     }
     let attemptID = UUID()
     operationAttemptID = attemptID
-    operationStartupMode = .command
-    guard settingsStore.settings.commandHotkey != nil,
-      !settingsStore.settings.llmModel
-        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    else {
-      rejectCommandStart(with: .llmServerFailure)
+    operationStartupMode = mode
+    guard isActive(mode) else {
+      rejectStart(mode: mode, with: startBlocker(for: mode))
       clearOperation(ifAttemptID: attemptID)
       return
     }
     guard modelState == .ready else {
-      rejectCommandStart(with: .asrNotInitialized)
+      rejectStart(mode: mode, with: .asrNotInitialized)
       clearOperation(ifAttemptID: attemptID)
       return
     }
 
     microphonePermission.refresh()
     guard microphonePermission.isGranted else {
-      rejectCommandStart(with: .microphoneDenied)
+      rejectStart(mode: mode, with: .microphoneDenied)
       clearOperation(ifAttemptID: attemptID)
       return
     }
     accessibilityPermission.refresh()
     guard accessibilityPermission.isTrusted else {
-      rejectCommandStart(with: .accessibilityDenied)
+      rejectStart(mode: mode, with: .accessibilityDenied)
       clearOperation(ifAttemptID: attemptID)
       return
     }
     guard let target = await targetTracker.capture() else {
-      rejectCommandStart(with: .targetChanged)
+      rejectStart(mode: mode, with: .targetChanged)
       clearOperation(ifAttemptID: attemptID)
       return
     }
@@ -485,6 +503,7 @@ final class AppModel: ObservableObject {
       let appModel = self
       let coordinator = self.coordinator
       _ = try await commandPipeline.begin(
+        mode: mode,
         target: target,
         levels: { level in
           Task { @MainActor in
@@ -497,7 +516,7 @@ final class AppModel: ObservableObject {
               return false
             }
             appModel.operationID = operationID
-            appModel.operationMode = .command
+            appModel.operationMode = mode
             appModel.operationTarget = target
             appModel.operationPhase = .recording
             return true
@@ -511,9 +530,9 @@ final class AppModel: ObservableObject {
         return
       }
       operationStartupMode = nil
-      if pendingStopMode == .command {
+      if pendingStopMode == mode {
         pendingStopMode = nil
-        await finishCommand()
+        await finishSelectionMode(mode)
       }
     } catch {
       await targetTracker.release(target)
@@ -522,15 +541,256 @@ final class AppModel: ObservableObject {
       }
       if error as? MicAIError == .cancelled {
         clearOperation(ifAttemptID: attemptID)
-        hotkeyMonitor.reset(mode: .command)
+        hotkeyMonitor.reset(mode: mode)
         return
       }
       let micAIError = (error as? MicAIError) ?? .insertionFailed
       errorMessage = micAIError.localizedDescription
       operationPhase = .failed(micAIError)
       clearOperation(ifAttemptID: attemptID)
-      hotkeyMonitor.reset(mode: .command)
+      hotkeyMonitor.reset(mode: mode)
     }
+  }
+
+  private func finishTranslate() async {
+    let engine = translationEngine
+    let language = settingsStore.settings.translationTargetLanguage
+    await runSelectionInsertion(mode: .translate) { spokenText, selectedText, model in
+      try await engine.translate(
+        spokenText: spokenText,
+        selectedText: selectedText,
+        targetLanguage: language,
+        model: model
+      )
+    }
+  }
+
+  private func finishAsk() async {
+    guard let operationID, let target = operationTarget else {
+      return
+    }
+
+    operationPhase = .transcribing
+    inputLevel = 0
+    do {
+      let appModel = self
+      let engine = askEngine
+      let model = settingsStore.settings.llmModel
+      let alwaysWindow = settingsStore.settings.askAlwaysOpensWindow
+      let produced = try await commandPipeline.finish(
+        operationID: operationID,
+        awaitingLLM: {
+          await MainActor.run { appModel.operationPhase = .awaitingLLM }
+        }
+      ) { spokenText, selectedText in
+        try await engine.ask(
+          question: spokenText,
+          selectedText: selectedText,
+          model: model,
+          alwaysOpensWindow: alwaysWindow
+        )
+      }
+      let result = produced.value
+
+      // An answer bound for the window never touches the target application, so
+      // it skips insertion entirely -- and with it the Accessibility check and
+      // the clipboard round trip.
+      if result.destination == .answerWindow {
+        guard await coordinator.markInserting(operationID: operationID) else {
+          throw MicAIError.cancelled
+        }
+        guard await coordinator.complete(operationID: operationID) else {
+          throw MicAIError.cancelled
+        }
+        await recordSelectionHistory(
+          mode: .ask,
+          spoken: produced.instruction,
+          output: result.answer,
+          target: target
+        )
+        pendingAnswer = AskAnswer(
+          question: result.question,
+          answer: result.answer,
+          usedSelection: result.usedSelection
+        )
+        complete(transcript: produced.instruction)
+        return
+      }
+
+      try await insert(
+        result.insertionIntent,
+        operationID: operationID,
+        target: target,
+        mode: .ask,
+        spoken: produced.instruction,
+        output: result.answer
+      )
+    } catch {
+      await failSelectionMode(operationID: operationID, error: error)
+    }
+  }
+
+  /// Shared tail for the modes that end in an insertion: transcribe, transform,
+  /// insert, record history.
+  private func runSelectionInsertion(
+    mode: MicAIMode,
+    produce: @escaping @Sendable (String, String?, String) async throws -> InsertionIntent
+  ) async {
+    guard let operationID, let target = operationTarget else {
+      return
+    }
+
+    operationPhase = .transcribing
+    inputLevel = 0
+    do {
+      let appModel = self
+      let model = settingsStore.settings.llmModel
+      let produced = try await commandPipeline.finish(
+        operationID: operationID,
+        awaitingLLM: {
+          await MainActor.run { appModel.operationPhase = .awaitingLLM }
+        }
+      ) { spokenText, selectedText in
+        try await produce(spokenText, selectedText, model)
+      }
+
+      try await insert(
+        produced.value,
+        operationID: operationID,
+        target: target,
+        mode: mode,
+        spoken: produced.instruction,
+        output: produced.value.text
+      )
+    } catch {
+      await failSelectionMode(operationID: operationID, error: error)
+    }
+  }
+
+  private func insert(
+    _ intent: InsertionIntent,
+    operationID: UUID,
+    target: TargetIdentity,
+    mode: MicAIMode,
+    spoken: Transcript,
+    output: String
+  ) async throws {
+    guard await coordinator.markInserting(operationID: operationID) else {
+      throw MicAIError.cancelled
+    }
+    operationPhase = .inserting
+    accessibilityPermission.refresh()
+    guard accessibilityPermission.isTrusted else {
+      throw MicAIError.accessibilityDenied
+    }
+
+    var diagnostic: String?
+    do {
+      let coordinator = self.coordinator
+      try await insertionCoordinator.apply(
+        intent,
+        to: target,
+        while: { await coordinator.isCurrent(operationID: operationID) }
+      )
+    } catch let error as MicAIError where error == .clipboardChanged {
+      diagnostic = error.localizedDescription
+    }
+
+    guard await coordinator.complete(operationID: operationID) else {
+      throw MicAIError.cancelled
+    }
+    providerStatus = .readyToAttempt
+    await recordSelectionHistory(
+      mode: mode,
+      spoken: spoken,
+      output: output,
+      target: target
+    )
+    complete(transcript: spoken, diagnostic: diagnostic)
+  }
+
+  private func failSelectionMode(operationID: UUID, error: Error) async {
+    let micAIError = (error as? MicAIError) ?? .llmServerFailure
+    if micAIError == .cancelled, !(await coordinator.isCurrent(operationID: operationID)) {
+      return
+    }
+    providerStatus = .failed(micAIError)
+    if await coordinator.isCurrent(operationID: operationID) {
+      _ = await coordinator.fail(operationID: operationID, error: micAIError)
+    }
+    errorMessage = micAIError.localizedDescription
+    operationPhase = .failed(micAIError)
+    clearOperation()
+  }
+
+  private func recordSelectionHistory(
+    mode: MicAIMode,
+    spoken: Transcript,
+    output: String,
+    target: TargetIdentity
+  ) async {
+    guard settingsStore.settings.historyEnabled else {
+      return
+    }
+    await historyStore.record(
+      HistoryEntry(
+        mode: mode,
+        rawTranscript: spoken.text,
+        finalText: output,
+        applicationName: target.applicationName,
+        bundleIdentifier: target.bundleIdentifier,
+        audioDuration: spoken.audioDuration,
+        refined: true
+      )
+    )
+    await refreshStoredCollections()
+  }
+
+  private func finishSelectionMode(_ mode: MicAIMode) async {
+    switch mode {
+    case .command:
+      await finishCommand()
+    case .translate:
+      await finishTranslate()
+    case .ask:
+      await finishAsk()
+    case .dictation:
+      await finishDictation()
+    }
+  }
+
+  private func isActive(_ mode: MicAIMode) -> Bool {
+    switch mode {
+    case .dictation:
+      true
+    case .command:
+      settingsStore.settings.areCommandsActive
+    case .translate:
+      settingsStore.settings.isTranslateActive
+    case .ask:
+      settingsStore.settings.isAskActive
+    }
+  }
+
+  /// The most specific reason a mode is unavailable, so the HUD says something
+  /// the user can act on rather than a generic service failure.
+  private func startBlocker(for mode: MicAIMode) -> MicAIError {
+    let settings = settingsStore.settings
+    if settings.privacyMode {
+      return .llmForbidden
+    }
+    if mode == .translate,
+      settings.translationTargetLanguage
+        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+      return .translationLanguageMissing
+    }
+    return .llmServerFailure
+  }
+
+  private func rejectStart(mode: MicAIMode, with error: MicAIError) {
+    errorMessage = error.localizedDescription
+    hotkeyMonitor.reset(mode: mode)
   }
 
   private func finishCommand() async {
@@ -603,10 +863,11 @@ final class AppModel: ObservableObject {
     }
   }
 
-  private func cancelCommand() async {
+  private func cancelSelectionMode(_ mode: MicAIMode) async {
     guard let operationID else {
       return
     }
+    hotkeyMonitor.reset(mode: mode)
     await commandPipeline.cancel(operationID: operationID)
     operationPhase = .idle
     errorMessage = nil
@@ -725,11 +986,6 @@ final class AppModel: ObservableObject {
   private func rejectDictationStart(with error: MicAIError) {
     errorMessage = error.localizedDescription
     hotkeyMonitor.reset(mode: .dictation)
-  }
-
-  private func rejectCommandStart(with error: MicAIError) {
-    errorMessage = error.localizedDescription
-    hotkeyMonitor.reset(mode: .command)
   }
 
   private func cancelActiveOperation() async {

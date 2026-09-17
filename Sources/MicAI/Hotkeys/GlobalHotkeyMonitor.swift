@@ -5,13 +5,17 @@ import MicAICore
 final class GlobalHotkeyMonitor {
   typealias ActionHandler = @MainActor @Sendable (MicAIMode, HotkeyAction) -> Void
 
+  // One machine and chord tracker per mode, keyed rather than four sets of
+  // fields: adding AI Translate and Ask AI to a hardcoded pair meant every
+  // method growing a branch it could silently forget.
+  private struct Binding {
+    var hotkey: Hotkey
+    var machine: HotkeyStateMachine
+    var chordTracker = HotkeyChordTracker()
+  }
+
   private var monitor: Any?
-  private var dictationHotkey: Hotkey
-  private var commandHotkey: Hotkey?
-  private var dictationMachine: HotkeyStateMachine
-  private var commandMachine = HotkeyStateMachine(activationMode: .hold)
-  private var dictationChordTracker = HotkeyChordTracker()
-  private var commandChordTracker = HotkeyChordTracker()
+  private var bindings: [MicAIMode: Binding] = [:]
   private let actionHandler: ActionHandler
   private let cancelHandler: @MainActor @Sendable () -> Void
 
@@ -20,37 +24,43 @@ final class GlobalHotkeyMonitor {
     actionHandler: @escaping ActionHandler,
     cancelHandler: @escaping @MainActor @Sendable () -> Void
   ) {
-    dictationHotkey = settings.dictationHotkey
-    commandHotkey = settings.commandHotkey
-    dictationMachine = HotkeyStateMachine(
-      activationMode: settings.dictationActivationMode
-    )
     self.actionHandler = actionHandler
     self.cancelHandler = cancelHandler
+    rebuild(from: settings)
   }
 
   func update(settings: AppSettings) {
-    dictationHotkey = settings.dictationHotkey
-    commandHotkey = settings.commandHotkey
-    dictationMachine = HotkeyStateMachine(
-      activationMode: settings.dictationActivationMode
-    )
-    commandMachine = HotkeyStateMachine(activationMode: .hold)
-    dictationChordTracker = HotkeyChordTracker()
-    commandChordTracker = HotkeyChordTracker()
+    rebuild(from: settings)
   }
 
   func reset(mode: MicAIMode) {
-    switch mode {
-    case .dictation:
-      dictationMachine = HotkeyStateMachine(
-        activationMode: dictationMachine.activationMode
-      )
-      dictationChordTracker = HotkeyChordTracker()
-    case .command:
-      commandMachine = HotkeyStateMachine(activationMode: .hold)
-      commandChordTracker = HotkeyChordTracker()
+    guard var binding = bindings[mode] else {
+      return
     }
+    binding.machine = HotkeyStateMachine(
+      activationMode: binding.machine.activationMode
+    )
+    binding.chordTracker = HotkeyChordTracker()
+    bindings[mode] = binding
+  }
+
+  /// Only dictation honours the hold/toggle preference. The other three are
+  /// always hold: a toggled command leaves the app recording with no visible
+  /// owner if the user forgets the second press.
+  private func rebuild(from settings: AppSettings) {
+    var next: [MicAIMode: Binding] = [:]
+    for mode in MicAIMode.allCases {
+      guard let hotkey = settings.hotkey(for: mode) else {
+        continue
+      }
+      let activation: DictationActivationMode =
+        mode == .dictation ? settings.dictationActivationMode : .hold
+      next[mode] = Binding(
+        hotkey: hotkey,
+        machine: HotkeyStateMachine(activationMode: activation)
+      )
+    }
+    bindings = next
   }
 
   func start() {
@@ -76,46 +86,42 @@ final class GlobalHotkeyMonitor {
 
   private func receive(_ event: GlobalHotkeyEvent) {
     if event.kind == .keyDown, event.keyCode == 53, !event.isRepeat {
-      reset(mode: .dictation)
-      reset(mode: .command)
+      for mode in MicAIMode.allCases {
+        reset(mode: mode)
+      }
       cancelHandler()
       return
     }
 
-    if Self.matches(
-      event,
-      hotkey: dictationHotkey,
-      chordTracker: &dictationChordTracker
-    ) {
-      emit(
-        machine: &dictationMachine,
-        mode: .dictation,
-        event: inputEvent(from: event)
-      )
-    } else if let commandHotkey,
-      Self.matches(
+    // Fixed order so a settings state with two modes on one chord is at least
+    // deterministic; `AppSettings.validated()` rejects that case up front.
+    for mode in MicAIMode.allCases {
+      guard var binding = bindings[mode] else {
+        continue
+      }
+      // Both the chord tracker and the state machine are mutating structs, and
+      // either can change state while producing no action (a press that only
+      // arms the chord). The write-back therefore happens unconditionally --
+      // guarding it on an action returned would drop half the presses.
+      let matched = Self.matches(
         event,
-        hotkey: commandHotkey,
-        chordTracker: &commandChordTracker
+        hotkey: binding.hotkey,
+        chordTracker: &binding.chordTracker
       )
-    {
-      emit(
-        machine: &commandMachine,
-        mode: .command,
-        event: inputEvent(from: event)
-      )
-    }
-  }
+      var action: HotkeyAction?
+      if matched, let input = inputEvent(from: event) {
+        action = binding.machine.handle(input)
+      }
+      bindings[mode] = binding
 
-  private func emit(
-    machine: inout HotkeyStateMachine,
-    mode: MicAIMode,
-    event: HotkeyInputEvent?
-  ) {
-    guard let event, let action = machine.handle(event) else {
+      guard matched else {
+        continue
+      }
+      if let action {
+        actionHandler(mode, action)
+      }
       return
     }
-    actionHandler(mode, action)
   }
 
   private static func matches(
