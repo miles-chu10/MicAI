@@ -581,15 +581,16 @@ final class AppModel: ObservableObject {
         operationID: operationID,
         awaitingLLM: {
           await MainActor.run { appModel.operationPhase = .awaitingLLM }
+        },
+        produce: { spokenText, selectedText in
+          try await engine.ask(
+            question: spokenText,
+            selectedText: selectedText,
+            model: model,
+            alwaysOpensWindow: alwaysWindow
+          )
         }
-      ) { spokenText, selectedText in
-        try await engine.ask(
-          question: spokenText,
-          selectedText: selectedText,
-          model: model,
-          alwaysOpensWindow: alwaysWindow
-        )
-      }
+      )
       let result = produced.value
 
       // An answer bound for the window never touches the target application, so
@@ -649,10 +650,11 @@ final class AppModel: ObservableObject {
         operationID: operationID,
         awaitingLLM: {
           await MainActor.run { appModel.operationPhase = .awaitingLLM }
+        },
+        produce: { spokenText, selectedText in
+          try await produce(spokenText, selectedText, model)
         }
-      ) { spokenText, selectedText in
-        try await produce(spokenText, selectedText, model)
-      }
+      )
 
       try await insert(
         produced.value,
@@ -996,20 +998,26 @@ final class AppModel: ObservableObject {
       operationAttemptID = nil
       operationPhase = .idle
       inputLevel = 0
-      hotkeyMonitor.reset(mode: .dictation)
-      hotkeyMonitor.reset(mode: .command)
+      resetAllHotkeys()
       return
     }
     switch operationMode {
     case .dictation:
       await cancelDictation()
-    case .command:
-      await cancelCommand()
+    case .command, .translate, .ask:
+      await cancelSelectionMode(operationMode ?? .command)
     case nil:
       return
     }
-    hotkeyMonitor.reset(mode: .dictation)
-    hotkeyMonitor.reset(mode: .command)
+    resetAllHotkeys()
+  }
+
+  /// Resets every mode rather than naming them: Esc and an aborted start clear
+  /// the whole keyboard, and a list here is one more place to forget a mode.
+  private func resetAllHotkeys() {
+    for mode in MicAIMode.allCases {
+      hotkeyMonitor.reset(mode: mode)
+    }
   }
 
   private func refreshProviderStatus() {

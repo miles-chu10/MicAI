@@ -40,18 +40,23 @@ public struct AskIntentClassifier: Sendable {
       return .answerWindow
     }
 
-    let firstWord = trimmed
-      .split(whereSeparator: { $0.isWhitespace })
-      .first
-      .map { word in
-        word
-          .lowercased()
-          .trimmingCharacters(in: CharacterSet.punctuationCharacters)
-          .replacingOccurrences(of: "'", with: "")
-      }
-    guard let firstWord, Self.interrogatives.contains(firstWord) else {
+    let words = trimmed.split(whereSeparator: { $0.isWhitespace })
+    guard let first = words.first else {
+      return .insertAtCursor
+    }
+    guard Self.interrogatives.contains(Self.normalize(first)) else {
       return .insertAtCursor
     }
     return .answerWindow
+  }
+
+  /// Lowercases and strips the punctuation a transcript may carry, including the
+  /// typographic apostrophe: recognizers emit both forms of "what's", and only
+  /// the stripped "whats" is in the table.
+  static func normalize(_ word: some StringProtocol) -> String {
+    var lowered = word.lowercased()
+    lowered = lowered.replacingOccurrences(of: "'", with: "")
+    lowered = lowered.replacingOccurrences(of: "\u{2019}", with: "")
+    return lowered.trimmingCharacters(in: CharacterSet.punctuationCharacters)
   }
 }
