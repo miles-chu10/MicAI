@@ -123,6 +123,8 @@ struct AppSettingsTests {
           "historyLimit",
           "defaultTone",
           "styleOverrides",
+          "translationTargetLanguage",
+          "askAlwaysOpensWindow",
         ]
     )
     #expect(try JSONDecoder().decode(AppSettings.self, from: data) == settings)

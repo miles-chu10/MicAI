@@ -251,13 +251,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     let trimmedLanguage = trimmed(translationTargetLanguage)
     let llmModes: [Hotkey?] = [commandHotkey, translateHotkey, askHotkey]
 
-    if !privacyMode, trimmedModel.isEmpty, llmModes.contains(where: { $0 != nil }) {
-      throw AppSettingsValidationError.emptyModel
-    }
-    if !privacyMode, translateHotkey != nil, trimmedLanguage.isEmpty {
-      throw AppSettingsValidationError.emptyTargetLanguage
-    }
-
+    // Structural problems are reported before missing values. Binding two modes
+    // to one chord while the language box happens to be empty is a collision,
+    // and saying "enter a language" would send the user to fix the wrong field.
+    //
     // Every configured hotkey must be distinct: two modes on one chord means
     // whichever the monitor happens to test first silently wins.
     let configured = [dictationHotkey] + llmModes.compactMap { $0 }
@@ -266,6 +263,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
     }
     guard configured.allSatisfy(Self.isUsable) else {
       throw AppSettingsValidationError.unusableHotkey
+    }
+
+    if !privacyMode, trimmedModel.isEmpty, llmModes.contains(where: { $0 != nil }) {
+      throw AppSettingsValidationError.emptyModel
+    }
+    if !privacyMode, translateHotkey != nil, trimmedLanguage.isEmpty {
+      throw AppSettingsValidationError.emptyTargetLanguage
     }
 
     var validatedSettings = self
