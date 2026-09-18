@@ -18,6 +18,7 @@ Voiskey capabilities identified:
 
 | Capability | Source characterization |
 | --- | --- |
+| Three hotkey modes | Dictation, AI Translate, and Ask AI, all driven from keyboard shortcuts |
 | Context-aware output | Reads the destination app and tailors formatting, tone, and word choice |
 | Disfluency clean-up | Catches fillers, stumbles, changes of mind, grammar slips |
 | Learned vocabulary | Remembers names, jargon, spelling preferences after one correction |
@@ -91,6 +92,38 @@ A hard local-only switch: no refinement, no AI Commands. It *suppresses* rather
 than edits `refinementEnabled` and `commandHotkey`, so turning it off restores
 the user's previous configuration instead of making them set it up again.
 
+### AI Translate — `Sources/MicAICore/Translate/`
+
+With text selected, the selection is translated in place. With nothing selected,
+what you say is translated and inserted. The target language is free text rather
+than an enum: the model handles any language, and a fixed list would be
+maintenance that silently caps the feature. Parakeet still recognizes English on
+device, so dictated input is English — but a *selection* can be any language,
+which makes inbound translation work too.
+
+### Ask AI — `Sources/MicAICore/Ask/`
+
+Ask a question and the answer opens in a window; say something that is not a
+question and it is typed at the cursor. Routing is `AskIntentClassifier`, a local
+heuristic (trailing `?`, or a leading interrogative), **not** a model call: it
+decides whether text lands in the user's document, so it has to be predictable
+across identical utterances. A model that classified the same sentence
+differently on two presses would make the hotkey feel broken.
+
+The routing is deliberately asymmetric. The `askAlwaysOpensWindow` preference can
+only ever *force* the window; nothing routes an answer to the cursor against the
+classifier. A wrong window costs a glance, a wrong insertion overwrites what the
+user was writing.
+
+Ask reads the selection as context and never replaces it — asking "what does this
+regex do" must not overwrite the regex. That is why
+`CommandPipeline.finish` is generic in its result rather than always returning an
+`InsertionIntent`.
+
+The answer window offers Copy rather than "Insert at cursor": by the time it is
+open it owns the focus, so inserting would mean reactivating the previous app and
+synthesising a paste into a target the user may have already left.
+
 ### Orchestration — `DictationComposer`
 
 One place that owns the post-transcription ordering — vocabulary, then tone,
@@ -111,15 +144,25 @@ interfaces, so adding a sync backend later does not require a rewrite.
 ## Verification status
 
 Verified by CI on a macOS runner (`.github/workflows/ci.yml`): the package
-compiles, 128 tests pass, `dist/MicAI.app` builds and codesigns, and the build
+compiles, 162 tests pass, `dist/MicAI.app` builds and codesigns, and the build
 leaves the working tree clean. That covers acceptance criteria 1, 6 and 7 in
 `docs/BRIEF.md`.
 
-The first CI run found a real bug that reading the code had not: `isUsable`
-compared a vocabulary entry's two sides case-INSENSITIVELY, so `"slack"` ->
-`"Slack"` was discarded as a no-op. Capitalizing a proper noun the recognizer
-lowercased is the most common correction the feature exists to make, so the
-filter was rejecting its primary use case.
+CI has caught four real defects that reading the code did not:
+
+1. `VocabularyEntry.isUsable` compared an entry's two sides case-INSENSITIVELY,
+   so `"slack"` -> `"Slack"` was discarded as a no-op. Capitalizing a proper noun
+   the recognizer lowercased is the most common correction the feature exists to
+   make, so the filter was rejecting its primary use case.
+2. `cancelActiveOperation` held a second switch over the operation mode that the
+   AI Translate / Ask AI refactor missed: it called a renamed method and was no
+   longer exhaustive.
+3. `AskIntentClassifier` stripped only the ASCII apostrophe, so a transcript
+   using the typographic one would have routed "what's ..." to the cursor
+   instead of the answer window.
+4. `AppSettings.validated` reported a missing translation language when the real
+   problem was two modes bound to the same chord, sending the user to fix the
+   wrong field. Structural checks now run first.
 
 **CI cannot verify the product.** Criteria 2-5 -- onboarding and permissions,
 hold-to-dictate landing text at the cursor within ~2s, a spoken command
@@ -132,15 +175,25 @@ Parakeet model. Green CI here means "it compiles and the units behave", not
 
 1. **UI fidelity.** The HUD, Settings, History, and onboarding layouts are
    conventional macOS design, not a match to Voiskey. Screenshots of Voiskey's
-   HUD, settings, history panel, and onboarding are needed to close this.
-2. **HUD tone badge.** Showing the resolved tone live during recording is one of
+   HUD, settings, history panel, and onboarding are needed to close this. A
+   rendering of the current screens, built from the SwiftUI source, is at
+   https://claude.ai/artifact/33hnKKRpwZXnfzGM5Rh7go
+2. **The Ask AI answer window is unverified.** It is raised from the
+   `MenuBarExtra` label, the only always-instantiated view in a menu-bar-only
+   app and therefore the only place that can observe an answer arriving and still
+   reach `openWindow`. CI cannot exercise it; try it first in the manual pass.
+3. **`AskIntentClassifier` will misfire on phrasings not in its table.** The
+   interrogative list is fixed. Routing errors are safe in one direction only
+   (toward the window), but a question phrased unusually will be typed at the
+   cursor.
+4. **HUD tone badge.** Showing the resolved tone live during recording is one of
    the more distinctive context-aware affordances, but it is a visual decision;
    `AppModel.lastTone` is published and ready to bind once the design is settled.
-3. **Bundle identifier accuracy.** Several entries in
+5. **Bundle identifier accuracy.** Several entries in
    `AppStyleResolver.builtInBundleTones` are best-effort and unverified on a real
    Mac — notably Cursor, the ChatGPT desktop app, Claude desktop, and Notion. The
    name-keyword fallback covers a wrong identifier, and users can override, but
    the table is worth checking against real `NSRunningApplication` values.
-4. **Refinement latency.** Clean-up adds a network round trip to every dictation.
+6. **Refinement cost and latency.** Clean-up adds a network round trip to every dictation.
    Whether that is acceptable, or should be gated to longer utterances, needs
    real-world measurement.
