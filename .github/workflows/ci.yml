@@ -1,0 +1,94 @@
+# Compiles and tests MicAI on a macOS runner.
+#
+# This exists because the package cannot be built anywhere else: FluidAudio's
+# CoreML models, AVFoundation, AppKit and CGEvent are all macOS-only, so a Linux
+# container can only ever guess at whether the code compiles. CI is the only
+# automated thing that can actually answer that.
+#
+# What CI CANNOT verify, and still needs a human at a Mac: microphone capture,
+# Accessibility-gated text insertion, global hotkey capture, and the on-device
+# Parakeet model download. A runner has no microphone and cannot grant
+# Accessibility, so acceptance criteria 2-5 in docs/BRIEF.md stay manual.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Nothing here writes to the repository; checkout is the only token consumer.
+permissions:
+  contents: read
+
+# A newer push makes an in-flight run irrelevant; cancelling keeps feedback fast.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .build
+          key: spm-debug-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-debug-
+
+      - name: Build
+        run: swift build --build-tests
+
+      - name: Test
+        run: bash scripts/codex-test.sh
+
+  package:
+    name: Package app bundle
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .build
+          key: spm-release-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-release-
+
+      # Acceptance criterion 1 in docs/BRIEF.md: a clean clone must produce
+      # dist/MicAI.app with no Xcode involved.
+      - name: Build app bundle
+        run: bash scripts/codex-build.sh
+
+      - name: Verify bundle layout
+        run: |
+          test -x dist/MicAI.app/Contents/MacOS/MicAI
+          test -f dist/MicAI.app/Contents/Resources/MicAI.icns
+          /usr/bin/plutil -lint dist/MicAI.app/Contents/Info.plist
+          /usr/bin/codesign --verify --deep --strict dist/MicAI.app
+
+      # Acceptance criterion 7: build output must stay out of the working tree.
+      - name: Assert build artifacts are ignored
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Build left untracked or modified files:" >&2
+            git status --porcelain >&2
+            exit 1
+          fi
+
+  format:
+    name: Format lint
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Lint
+        run: bash scripts/codex-lint.sh
