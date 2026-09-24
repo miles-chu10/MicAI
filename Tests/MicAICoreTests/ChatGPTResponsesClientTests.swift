@@ -102,12 +102,19 @@ struct ChatGPTResponsesClientTests {
 
   @Test
   func cancellationBeforeResponseHeadersMapsToCancelled() async {
+    let statuses = ProviderStatusCollector()
+    let request = anyRequest()
     let client = ChatGPTResponsesClient(
       credentialLoader: CountingCredentialLoader(),
-      transport: FailingTransport(error: URLError(.cancelled))
+      transport: FailingTransport(error: URLError(.cancelled)),
+      scopedStatusHandler: statuses.append
     )
 
-    await expectFailure(from: client, request: anyRequest(), is: .cancelled)
+    await expectFailure(from: client, request: request, is: .cancelled)
+    #expect(
+      statuses.values == [
+        ProviderStatusEvent(requestID: request.sessionID, status: .failed(.cancelled))
+      ])
   }
 
   @Test
@@ -182,18 +189,23 @@ struct ChatGPTResponsesClientTests {
   @Test
   func providerStatusReportsCredentialRetryAndRecovery() async throws {
     let statuses = ProviderStatusCollector()
+    let request = anyRequest()
     let client = ChatGPTResponsesClient(
       credentialLoader: CountingCredentialLoader(),
       transport: FakeTransport([
         ResponsesHTTPResponse(statusCode: 401, bodyChunks: []),
         okResponse(deltas: ["OK"]),
       ]),
-      statusHandler: statuses.append
+      scopedStatusHandler: statuses.append
     )
 
-    _ = try await client.transform(anyRequest())
+    _ = try await client.transform(request)
 
-    #expect(statuses.values == [.retryingCredential, .readyToAttempt])
+    #expect(
+      statuses.values == [
+        ProviderStatusEvent(requestID: request.sessionID, status: .retryingCredential),
+        ProviderStatusEvent(requestID: request.sessionID, status: .readyToAttempt),
+      ])
   }
 
   @Test
@@ -355,17 +367,22 @@ private final class CountingCredentialLoader: CredentialLoading, @unchecked Send
   }
 }
 
+private struct ProviderStatusEvent: Sendable, Equatable {
+  let requestID: UUID
+  let status: ProviderStatus
+}
+
 private final class ProviderStatusCollector: @unchecked Sendable {
   private let lock = NSLock()
-  private var storedValues: [ProviderStatus] = []
+  private var storedValues: [ProviderStatusEvent] = []
 
-  var values: [ProviderStatus] {
+  var values: [ProviderStatusEvent] {
     lock.withLock { storedValues }
   }
 
-  func append(_ status: ProviderStatus) {
+  func append(requestID: UUID, status: ProviderStatus) {
     lock.withLock {
-      storedValues.append(status)
+      storedValues.append(ProviderStatusEvent(requestID: requestID, status: status))
     }
   }
 }

@@ -42,7 +42,7 @@ final class AppModel: ObservableObject {
   private var operationAttemptID: UUID?
   private var operationStartupMode: MicAIMode?
   private var pendingStopMode: MicAIMode?
-  private var operationMode: MicAIMode?
+  @Published private(set) var operationMode: MicAIMode?
   private var operationTarget: TargetIdentity?
   private var cancellables: Set<AnyCancellable> = []
 
@@ -146,9 +146,10 @@ final class AppModel: ObservableObject {
         }
         .store(in: &cancellables)
     }
-    Publishers.CombineLatest3($operationPhase, $inputLevel, $errorMessage)
-      .sink { [weak self] phase, level, message in
+    Publishers.CombineLatest4($operationMode, $operationPhase, $inputLevel, $errorMessage)
+      .sink { [weak self] mode, phase, level, message in
         self?.hudController.update(
+          mode: mode,
           phase: phase,
           level: level,
           message: message
@@ -183,6 +184,12 @@ final class AppModel: ObservableObject {
 
   var isOperationActive: Bool {
     operationID != nil || operationAttemptID != nil
+  }
+
+  /// Settings are applied between operations so hotkeys and the model cannot
+  /// change under a recording that is already in flight.
+  var canApplySettings: Bool {
+    !isOperationActive
   }
 
   func prepareModel() {

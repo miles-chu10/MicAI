@@ -44,4 +44,8 @@ final class SettingsStore: ObservableObject {
     defaults.set(true, forKey: onboardingKey)
     hasSeenOnboarding = true
   }
+
+  func discardValidation() {
+    validationMessage = nil
+  }
 }

@@ -1,8 +1,10 @@
 @preconcurrency import AVFoundation
+import FluidAudio
 import Foundation
 
 public actor AVAudioEngineCapture: AudioCapturing {
   private static let targetSampleRate = 16_000
+  public static let maximumDurationSeconds: Double = 120
 
   private var engine: AVAudioEngine?
   private var accumulator: AudioAccumulator?
@@ -10,7 +12,8 @@ public actor AVAudioEngineCapture: AudioCapturing {
   public init() {}
 
   public func start(
-    levels: @escaping @Sendable (Float) -> Void
+    levels: @escaping @Sendable (Float) -> Void,
+    maximumDurationReached: @escaping @Sendable () -> Void
   ) async throws {
     guard engine == nil else {
       throw MicAIError.audioAlreadyRecording
@@ -25,7 +28,9 @@ public actor AVAudioEngineCapture: AudioCapturing {
 
     let accumulator = AudioAccumulator(
       sampleRate: format.sampleRate,
-      levels: levels
+      maximumDurationSeconds: Self.maximumDurationSeconds,
+      levels: levels,
+      maximumDurationReached: maximumDurationReached
     )
     input.installTap(
       onBus: 0,
@@ -58,11 +63,15 @@ public actor AVAudioEngineCapture: AudioCapturing {
     self.accumulator = nil
 
     let capture = accumulator.finish()
-    let samples = Self.resample(
-      capture.samples,
-      from: capture.sampleRate,
-      to: Double(Self.targetSampleRate)
-    )
+    let samples: [Float]
+    do {
+      samples = try Self.resampleForRecognition(
+        capture.samples,
+        from: capture.sampleRate
+      )
+    } catch {
+      throw MicAIError.audioUnavailable
+    }
     return RecordedAudio(
       samples: samples,
       sampleRate: Self.targetSampleRate,
@@ -80,43 +89,36 @@ public actor AVAudioEngineCapture: AudioCapturing {
     accumulator = nil
   }
 
-  private nonisolated static func resample(
+  nonisolated static func resampleForRecognition(
     _ samples: [Float],
-    from sourceRate: Double,
-    to targetRate: Double
-  ) -> [Float] {
-    guard !samples.isEmpty, sourceRate > 0 else {
-      return []
-    }
-    if sourceRate == targetRate {
-      return samples
-    }
-
-    let outputCount = Int((Double(samples.count) * targetRate / sourceRate).rounded(.down))
-    guard outputCount > 0 else {
-      return []
-    }
-
-    let sourceStep = sourceRate / targetRate
-    return (0..<outputCount).map { outputIndex in
-      let sourcePosition = Double(outputIndex) * sourceStep
-      let lowerIndex = min(Int(sourcePosition), samples.count - 1)
-      let upperIndex = min(lowerIndex + 1, samples.count - 1)
-      let fraction = Float(sourcePosition - Double(lowerIndex))
-      return samples[lowerIndex] + ((samples[upperIndex] - samples[lowerIndex]) * fraction)
-    }
+    from sampleRate: Double
+  ) throws -> [Float] {
+    try AudioConverter().resample(samples, from: sampleRate)
   }
 }
 
-private final class AudioAccumulator: @unchecked Sendable {
+final class AudioAccumulator: @unchecked Sendable {
   private let lock = NSLock()
   private let sampleRate: Double
+  private let maximumSampleCount: Int
   private let levels: @Sendable (Float) -> Void
+  private let maximumDurationReached: @Sendable () -> Void
   private var samples: [Float] = []
+  private var didReachMaximumDuration = false
 
-  init(sampleRate: Double, levels: @escaping @Sendable (Float) -> Void) {
+  init(
+    sampleRate: Double,
+    maximumDurationSeconds: Double,
+    levels: @escaping @Sendable (Float) -> Void,
+    maximumDurationReached: @escaping @Sendable () -> Void
+  ) {
     self.sampleRate = sampleRate
+    maximumSampleCount = max(
+      1,
+      Int((sampleRate * maximumDurationSeconds).rounded(.down))
+    )
     self.levels = levels
+    self.maximumDurationReached = maximumDurationReached
   }
 
   func append(_ buffer: AVAudioPCMBuffer) {
@@ -147,9 +149,21 @@ private final class AudioAccumulator: @unchecked Sendable {
     let level = min(1, sqrt(squareSum / Float(frameCount)))
 
     lock.lock()
-    samples.append(contentsOf: mono)
+    let remainingCapacity = max(0, maximumSampleCount - samples.count)
+    if remainingCapacity > 0 {
+      samples.append(contentsOf: mono.prefix(remainingCapacity))
+    }
+    let shouldNotify =
+      !didReachMaximumDuration && samples.count == maximumSampleCount
+    if shouldNotify {
+      didReachMaximumDuration = true
+    }
     lock.unlock()
+
     levels(level)
+    if shouldNotify {
+      maximumDurationReached()
+    }
   }
 
   func finish() -> (samples: [Float], sampleRate: Double) {

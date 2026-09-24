@@ -71,6 +71,7 @@ public struct Hotkey: Codable, Hashable, Sendable {
 }
 
 public enum AppSettingsValidationError: Error, Equatable, Sendable {
+  case emptyOpenAITranscriptionModel
   case duplicateHotkeys
   case unusableHotkey
   case emptyTargetLanguage
@@ -79,6 +80,8 @@ public enum AppSettingsValidationError: Error, Equatable, Sendable {
 extension AppSettingsValidationError: LocalizedError {
   public var errorDescription: String? {
     switch self {
+    case .emptyOpenAITranscriptionModel:
+      "Enter an OpenAI transcription model."
     case .duplicateHotkeys:
       "Dictation and command hotkeys must be different."
     case .unusableHotkey:
@@ -94,13 +97,19 @@ public struct AppSettings: Codable, Equatable, Sendable {
     dictationHotkey: .rightOption,
     commandHotkey: nil,
     dictationActivationMode: .hold,
-    llmModel: ""
+    llmModel: "",
+    dictationProvider: .parakeet,
+    openAITranscriptionModel: SpeechTranscriptionRequest.defaultOpenAIModel,
+    openAITranscriptionFallbackEnabled: true
   )
 
   public var dictationHotkey: Hotkey
   public var commandHotkey: Hotkey?
   public var dictationActivationMode: DictationActivationMode
   public var llmModel: String
+  public var dictationProvider: DictationProvider
+  public var openAITranscriptionModel: String
+  public var openAITranscriptionFallbackEnabled: Bool
 
   /// Send dictated transcripts through the LLM for clean-up and tone matching.
   /// Off means Parakeet's output goes to the cursor as-is.
@@ -144,7 +153,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     translateHotkey: Hotkey? = nil,
     translationTargetLanguage: String = "",
     askHotkey: Hotkey? = nil,
-    askAlwaysOpensWindow: Bool = false
+    askAlwaysOpensWindow: Bool = false,
+    dictationProvider: DictationProvider = .parakeet,
+    openAITranscriptionModel: String = SpeechTranscriptionRequest.defaultOpenAIModel,
+    openAITranscriptionFallbackEnabled: Bool = true
   ) {
     self.dictationHotkey = dictationHotkey
     self.commandHotkey = commandHotkey
@@ -160,6 +172,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     self.translationTargetLanguage = translationTargetLanguage
     self.askHotkey = askHotkey
     self.askAlwaysOpensWindow = askAlwaysOpensWindow
+    self.dictationProvider = dictationProvider
+    self.openAITranscriptionModel = openAITranscriptionModel
+    self.openAITranscriptionFallbackEnabled = openAITranscriptionFallbackEnabled
   }
 
   // Decoded field by field with defaults rather than synthesized, so settings
@@ -194,6 +209,29 @@ public struct AppSettings: Codable, Equatable, Sendable {
     askHotkey = try container.decodeIfPresent(Hotkey.self, forKey: .askHotkey)
     askAlwaysOpensWindow =
       try container.decodeIfPresent(Bool.self, forKey: .askAlwaysOpensWindow) ?? false
+    dictationProvider =
+      try container.decodeIfPresent(
+        DictationProvider.self,
+        forKey: .dictationProvider
+      ) ?? .parakeet
+    openAITranscriptionModel =
+      try container.decodeIfPresent(
+        String.self,
+        forKey: .openAITranscriptionModel
+      ) ?? SpeechTranscriptionRequest.defaultOpenAIModel
+    openAITranscriptionFallbackEnabled =
+      try container.decodeIfPresent(
+        Bool.self,
+        forKey: .openAITranscriptionFallbackEnabled
+      ) ?? true
+  }
+
+  public var dictationTranscriptionRequest: SpeechTranscriptionRequest {
+    SpeechTranscriptionRequest(
+      provider: dictationProvider,
+      model: openAITranscriptionModel,
+      fallbackToParakeet: openAITranscriptionFallbackEnabled
+    )
   }
 
   /// Refinement runs whenever it is enabled and privacy mode is off. A blank
@@ -262,12 +300,37 @@ public struct AppSettings: Codable, Equatable, Sendable {
     if !privacyMode, translateHotkey != nil, trimmedLanguage.isEmpty {
       throw AppSettingsValidationError.emptyTargetLanguage
     }
+    let trimmedTranscriptionModel = trimmed(openAITranscriptionModel)
+    if dictationProvider == .openAI, trimmedTranscriptionModel.isEmpty {
+      throw AppSettingsValidationError.emptyOpenAITranscriptionModel
+    }
 
     var validatedSettings = self
     validatedSettings.llmModel = trimmedModel
     validatedSettings.translationTargetLanguage = trimmedLanguage
     validatedSettings.historyLimit = min(max(historyLimit, 1), 2_000)
+    validatedSettings.openAITranscriptionModel = trimmedTranscriptionModel
     return validatedSettings
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case dictationHotkey
+    case commandHotkey
+    case dictationActivationMode
+    case llmModel
+    case dictationProvider
+    case openAITranscriptionModel
+    case openAITranscriptionFallbackEnabled
+    case refinementEnabled
+    case privacyMode
+    case historyEnabled
+    case historyLimit
+    case defaultTone
+    case styleOverrides
+    case translateHotkey
+    case translationTargetLanguage
+    case askHotkey
+    case askAlwaysOpensWindow
   }
 
   private static func isUsable(_ hotkey: Hotkey) -> Bool {

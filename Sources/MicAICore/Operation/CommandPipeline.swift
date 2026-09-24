@@ -2,10 +2,16 @@ import Foundation
 
 public struct CommandResult: Sendable, Equatable {
   public let instruction: Transcript
+  public let sourceText: String?
   public let intent: InsertionIntent
 
-  public init(instruction: Transcript, intent: InsertionIntent) {
+  public init(
+    instruction: Transcript,
+    sourceText: String? = nil,
+    intent: InsertionIntent
+  ) {
     self.instruction = instruction
+    self.sourceText = sourceText
     self.intent = intent
   }
 }
@@ -43,12 +49,14 @@ public actor CommandPipeline {
     target: TargetIdentity,
     model: String,
     levels: @escaping @Sendable (Float) -> Void,
+    maximumDurationReached: @escaping @Sendable () -> Void = {},
     operationStarted: @escaping @Sendable (UUID) async -> Void = { _ in }
   ) async throws -> UUID {
     let operationID = try await dictationPipeline.begin(
       mode: mode,
       target: target,
       levels: levels,
+      maximumDurationReached: maximumDurationReached,
       operationStarted: operationStarted
     )
 
@@ -72,7 +80,8 @@ public actor CommandPipeline {
     let commandEngine = self.commandEngine
     // The model is snapshotted at `begin`, so a Settings edit mid-operation
     // cannot change which model answers it.
-    let model = contexts[operationID]?.model ?? ""
+    let context = contexts[operationID]
+    let model = context?.model ?? ""
     let produced = try await finish(
       operationID: operationID,
       awaitingLLM: awaitingLLM
@@ -80,10 +89,15 @@ public actor CommandPipeline {
       try await commandEngine.execute(
         instruction: spokenText,
         selectedText: selectedText,
-        model: model
+        model: model,
+        requestID: operationID
       )
     }
-    return CommandResult(instruction: produced.instruction, intent: produced.value)
+    return CommandResult(
+      instruction: produced.instruction,
+      sourceText: context?.selectedText,
+      intent: produced.value
+    )
   }
 
   /// Runs the transcript and captured selection through `produce`, under the

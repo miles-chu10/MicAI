@@ -52,6 +52,17 @@ public actor TextInsertionCoordinator {
     }
   }
 
+  public func copyResult(_ text: String) throws {
+    guard !text.isEmpty else {
+      throw MicAIError.insertionFailed
+    }
+    do {
+      _ = try pasteboard.writePlainText(text)
+    } catch {
+      throw MicAIError.insertionFailed
+    }
+  }
+
   public func apply(
     _ intent: InsertionIntent,
     to target: TargetIdentity,
@@ -118,7 +129,13 @@ public actor TextInsertionCoordinator {
     }
 
     await delay()
-    try restore(original, ifCurrentChangeCountIs: writtenChangeCount)
+    do {
+      try restore(original, ifCurrentChangeCountIs: writtenChangeCount)
+    } catch let error as MicAIError where error == .clipboardChanged {
+      throw error
+    } catch {
+      throw MicAIError.clipboardRestoreFailedAfterInsertion
+    }
   }
 
   private func restoreBeforePaste(

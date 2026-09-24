@@ -7,8 +7,7 @@ struct MenuContentView: View {
 
   var body: some View {
     Button("Open MicAI") {
-      NSApplication.shared.activate(ignoringOtherApps: true)
-      openWindow(id: "main")
+      MainWindowPresenter.show()
     }
     .keyboardShortcut("0", modifiers: .command)
 
@@ -39,8 +38,7 @@ struct MenuContentView: View {
     if !appModel.readiness.dictation.isReady {
       Button("Review Setup…") {
         appModel.showOnboarding()
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        openWindow(id: "main")
+        MainWindowPresenter.show()
       }
     }
 
@@ -64,8 +62,7 @@ struct MicAICommands: Commands {
   var body: some Commands {
     CommandGroup(after: .appInfo) {
       Button("Open MicAI") {
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        openWindow(id: "main")
+        MainWindowPresenter.show()
       }
       .keyboardShortcut("0", modifiers: .command)
     }
