@@ -14,6 +14,8 @@ final class AppModel: ObservableObject {
   @Published private(set) var vocabularyEntries: [VocabularyEntry] = []
   /// Tone applied to the most recent dictation, shown in the HUD and history.
   @Published private(set) var lastTone: StyleTone?
+  /// Release-to-insertion timings for this session, in memory only.
+  @Published private(set) var metrics = LocalMetrics()
   /// Set when an Ask AI result was a question rather than content. The answer
   /// window observes this; nil means no answer is waiting.
   @Published var pendingAnswer: AskAnswer?
@@ -45,6 +47,7 @@ final class AppModel: ObservableObject {
   @Published private(set) var operationMode: MicAIMode?
   private var operationTarget: TargetIdentity?
   private var cancellables: Set<AnyCancellable> = []
+  private var timingRecorder = PhaseTimingRecorder()
 
   private lazy var hotkeyMonitor = GlobalHotkeyMonitor(
     settings: settingsStore.settings,
@@ -146,6 +149,11 @@ final class AppModel: ObservableObject {
         }
         .store(in: &cancellables)
     }
+    $operationPhase
+      .sink { [weak self] phase in
+        self?.observeForMetrics(phase)
+      }
+      .store(in: &cancellables)
     Publishers.CombineLatest4($operationMode, $operationPhase, $inputLevel, $errorMessage)
       .sink { [weak self] mode, phase, level, message in
         self?.hudController.update(
@@ -180,6 +188,33 @@ final class AppModel: ObservableObject {
       commandProviderAvailable: codexCLIAvailable,
       operationActive: operationID != nil || operationAttemptID != nil
     )
+  }
+
+  /// Feeds the phase stream to the timing recorder and the local OSLog
+  /// telemetry. Only modes, phases, error codes and durations are logged —
+  /// never transcripts, selections or answers.
+  private func observeForMetrics(_ phase: OperationPhase) {
+    let mode = operationMode
+    switch phase {
+    case .recording:
+      if let mode {
+        MicAITelemetry.operationStarted(mode: mode)
+      }
+    case .failed(let error):
+      if let mode, error != .cancelled {
+        MicAITelemetry.operationFailed(mode: mode, error: error)
+      }
+    case .idle, .transcribing, .awaitingLLM, .inserting:
+      break
+    }
+    if let timing = timingRecorder.observe(phase, mode: mode, at: .now) {
+      metrics.record(timing)
+      let seconds = timing.releaseToInsertion.components
+      MicAITelemetry.operationCompleted(
+        mode: timing.mode,
+        duration: Double(seconds.seconds) + Double(seconds.attoseconds) / 1e18
+      )
+    }
   }
 
   var isCodexCLIInstalled: Bool {
@@ -471,6 +506,7 @@ final class AppModel: ObservableObject {
   /// Returns to idle, then briefly shows "Cancelled" in the HUD so an Esc press
   /// gets visible confirmation that nothing was inserted.
   private func acknowledgeCancellation(mode: MicAIMode) {
+    MicAITelemetry.operationCancelled(mode: mode)
     operationPhase = .idle
     errorMessage = nil
     inputLevel = 0

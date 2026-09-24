@@ -299,8 +299,12 @@ private struct ActivityView: View {
       FeatureHeader(
         icon: "clock",
         title: "Current session",
-        subtitle: "MicAI does not persist transcription history or audio."
+        subtitle: "Your latest result and how long MicAI took. Audio is never kept; saved text is in History."
       )
+
+      if !appModel.metrics.timings.isEmpty {
+        PerformanceSummary(metrics: appModel.metrics)
+      }
 
       if let transcript = appModel.lastTranscript {
         GroupBox("Most recent local result") {
@@ -320,6 +324,43 @@ private struct ActivityView: View {
     }
     .padding(32)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+  }
+}
+
+private struct PerformanceSummary: View {
+  let metrics: LocalMetrics
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Text("Release to insertion")
+        .font(.headline)
+      HStack(spacing: 12) {
+        ForEach(MicAIMode.allCases, id: \.self) { mode in
+          if let median = metrics.median(for: mode), let worst = metrics.worst(for: mode) {
+            VStack(alignment: .leading, spacing: 4) {
+              Label(mode.displayName, systemImage: "timer")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(MicAIStatusColor.modeTint(mode))
+              Text(Self.format(median))
+                .font(.title2.weight(.semibold).monospacedDigit())
+              Text("median · worst \(Self.format(worst))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .micAICardSurface()
+          }
+        }
+      }
+      Text("Last \(metrics.timings.count) operations this session. Kept in memory only.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  private static func format(_ duration: Duration) -> String {
+    duration.formatted(.units(allowed: [.seconds], width: .narrow, fractionalPart: .show(length: 2)))
   }
 }
 
