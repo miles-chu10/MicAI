@@ -1,6 +1,10 @@
 import MicAICore
 import SwiftUI
 
+// Liquid Glass APIs ship with the macOS 26 SDK (Swift 6.2 toolchains).
+// `#available` is only a runtime check, so each glass branch is also gated at
+// compile time; older SDKs (CI's default Xcode) build the fallback styling.
+
 struct MicAIActionCluster<Content: View>: View {
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
   private let content: Content
@@ -10,33 +14,45 @@ struct MicAIActionCluster<Content: View>: View {
   }
 
   var body: some View {
-    if #available(macOS 26.0, *), !reduceTransparency {
-      GlassEffectContainer(spacing: 10) {
+    #if compiler(>=6.2)
+      if #available(macOS 26.0, *), !reduceTransparency {
+        GlassEffectContainer(spacing: 10) {
+          content
+        }
+      } else {
         content
       }
-    } else {
+    #else
       content
-    }
+    #endif
   }
 }
 
 extension View {
   @ViewBuilder
   func micAIPrimaryButtonStyle() -> some View {
-    if #available(macOS 26.0, *) {
-      buttonStyle(.glassProminent)
-    } else {
+    #if compiler(>=6.2)
+      if #available(macOS 26.0, *) {
+        buttonStyle(.glassProminent)
+      } else {
+        buttonStyle(.borderedProminent)
+      }
+    #else
       buttonStyle(.borderedProminent)
-    }
+    #endif
   }
 
   @ViewBuilder
   func micAISecondaryButtonStyle() -> some View {
-    if #available(macOS 26.0, *) {
-      buttonStyle(.glass)
-    } else {
+    #if compiler(>=6.2)
+      if #available(macOS 26.0, *) {
+        buttonStyle(.glass)
+      } else {
+        buttonStyle(.bordered)
+      }
+    #else
       buttonStyle(.bordered)
-    }
+    #endif
   }
 
   func micAIStatusSurface() -> some View {
@@ -97,11 +113,15 @@ private struct MicAIStatusSurfaceModifier: ViewModifier {
   @Environment(\.colorScheme) private var colorScheme
 
   func body(content: Content) -> some View {
-    if #available(macOS 26.0, *), !reduceTransparency {
-      content.glassEffect(.regular, in: .capsule)
-    } else {
+    #if compiler(>=6.2)
+      if #available(macOS 26.0, *), !reduceTransparency {
+        content.glassEffect(.regular, in: .capsule)
+      } else {
+        content.background(fallbackFill, in: .capsule)
+      }
+    #else
       content.background(fallbackFill, in: .capsule)
-    }
+    #endif
   }
 
   private var fallbackFill: Color {
@@ -117,14 +137,21 @@ private struct MicAIPanelSurfaceModifier: ViewModifier {
   let cornerRadius: CGFloat
 
   func body(content: Content) -> some View {
-    if #available(macOS 26.0, *), !reduceTransparency {
-      content.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
-    } else {
+    #if compiler(>=6.2)
+      if #available(macOS 26.0, *), !reduceTransparency {
+        content.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+      } else {
+        content.background(
+          fallbackFill,
+          in: .rect(cornerRadius: cornerRadius)
+        )
+      }
+    #else
       content.background(
         fallbackFill,
         in: .rect(cornerRadius: cornerRadius)
       )
-    }
+    #endif
   }
 
   private var fallbackFill: Color {
