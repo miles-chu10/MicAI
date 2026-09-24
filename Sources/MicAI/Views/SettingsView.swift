@@ -256,9 +256,6 @@ struct GeneralSettingsView: View {
     }
   }
 
-
-
-
 }
 
 private struct SettingsStatusRow: View {

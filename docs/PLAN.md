@@ -256,8 +256,9 @@ Files:
 - `Sources/MicAI/Views/PermissionStatusView.swift`
 - `Sources/MicAI/HUD/RecordingHUDController.swift`
 - `Sources/MicAI/HUD/RecordingHUDView.swift`
-- `Sources/MicAI/LaunchAtLogin/LaunchAtLoginService.swift`
-- `Tests/MicAICoreTests/StatusProjectionTests.swift`
+- `Sources/MicAI/Settings/LaunchAtLoginService.swift`
+- `Sources/MicAI/Views/HotkeyRecorderField.swift`, `Sources/MicAICore/Hotkeys/HotkeyCapture.swift`
+- `Tests/MicAICoreTests/AppReadinessTests.swift` (the four-way status projection is `AppReadiness`), `Tests/MicAICoreTests/HotkeyCaptureTests.swift`
 
 Verification:
 
@@ -289,7 +290,7 @@ Work:
 Files:
 
 - `Sources/MicAICore/Diagnostics/LocalMetrics.swift`
-- `Sources/MicAI/Diagnostics/RedactedLogger.swift`
+- `Sources/MicAI/Diagnostics/MicAITelemetry.swift` (redacted OSLog: modes, phases, error codes, durations only)
 - Existing implementation files as targeted fixes require
 - Existing `Tests/MicAICoreTests/*` as coverage requires
 

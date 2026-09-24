@@ -299,7 +299,8 @@ private struct ActivityView: View {
       FeatureHeader(
         icon: "clock",
         title: "Current session",
-        subtitle: "Your latest result and how long MicAI took. Audio is never kept; saved text is in History."
+        subtitle:
+          "Your latest result and how long MicAI took. Audio is never kept; saved text is in History."
       )
 
       if !appModel.metrics.timings.isEmpty {
@@ -360,7 +361,8 @@ private struct PerformanceSummary: View {
   }
 
   private static func format(_ duration: Duration) -> String {
-    duration.formatted(.units(allowed: [.seconds], width: .narrow, fractionalPart: .show(length: 2)))
+    duration.formatted(
+      .units(allowed: [.seconds], width: .narrow, fractionalPart: .show(length: 2)))
   }
 }
 

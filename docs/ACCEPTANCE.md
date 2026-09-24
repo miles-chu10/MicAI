@@ -1,6 +1,6 @@
 # MicAI prototype acceptance ledger
 
-Date: 2026-08-31
+Date: 2026-09-24 (branch `integrate/m7-9`)
 
 This ledger maps one-to-one to the seven acceptance criteria in
 `docs/BRIEF.md`. `PASS` means the full criterion has direct evidence.
@@ -13,13 +13,22 @@ used to prepare this ledger.
 
 | # | Criterion | Status | Evidence and remaining boundary |
 | --- | --- | --- | --- |
-| 1 | A clean-clone `bash scripts/codex-build.sh` succeeds and produces `dist/MicAI.app`. | **UNVERIFIED-MANUAL** | The current worktree build passed on 2026-07-27 and produced a signed app with an arm64 executable, valid plist, `MicAI.icns`, macOS 14 minimum, and `LSUIElement=true`. A clean clone with a cold dependency cache was not created because this task is constrained to the current worktree. |
+| 1 | A clean-clone `bash scripts/codex-build.sh` succeeds and produces `dist/MicAI.app`. | **PASS** | 2026-09-24: `git clone --branch integrate/m7-9` into `/tmp/micai-clean.*` (outside `~/code`, no `.build`), `bash scripts/codex-build.sh` exited 0 in 66 s with `/usr/bin/swift` 6.4; FluidAudio resolved at 0.15.5 (`exact`); `codesign --verify --deep --strict dist/MicAI.app` passed; plist has `LSUIElement=true`, `LSMinimumSystemVersion=14.0`. Caveat: SwiftPM reused its global repository cache, so the FluidAudio fetch was not network-cold. |
 | 2 | Launch shows the menu-bar icon; onboarding requests Microphone access and explains Accessibility. | **UNVERIFIED-MANUAL** | The packaged process remained alive and CoreGraphics observed its 940×640 primary window. Source and build evidence cover `MenuBarExtra`, `LSUIElement`, and the five-step onboarding UI. The menu icon and fresh-preference/TCC denial-and-recovery journey were not exercised. Follow Manual runbook A. |
 | 3 | Holding the dictation hotkey records; release transcribes locally with Parakeet and inserts into TextEdit within about two seconds for a 10-second utterance. | **UNVERIFIED-MANUAL** | The audio → local ASR → cleanup → exact-target guarded insertion path compiles and its fake-boundary tests pass. No model was downloaded, no audio was recorded, and no TextEdit or latency trial was performed. Follow Manual runbook B, including hold and toggle trials. |
 | 4 | Selected text plus the spoken command “make this uppercase” replaces it using the ChatGPT subscription. | **UNVERIFIED-MANUAL** | A synthetic authenticated `codex exec` request returned exactly `HELLO`; injected-runner tests cover stdin privacy, default/override models, missing CLI, and authorization failure. The spoken TextEdit journey remains. Follow Manual runbook C. |
 | 5 | Escape cancels recording without inserting anything. | **UNVERIFIED-MANUAL** | Core cancellation and stale-result suppression tests pass, and the HUD/cross-phase Esc path is wired. Real global Esc, recording, ASR wait, LLM wait, HUD focus, and zero-insertion behavior were not exercised. Follow Manual runbook D. |
-| 6 | `bash scripts/codex-test.sh` passes MicAICore tests covering command routing, Codex CLI invocation, and injected insertion strategies. | **PASS** | Focused suites cover command routing, ephemeral CLI arguments/stdin, direct Accessibility insertion, and guarded clipboard fallback. The full final suite is rerun after implementation. |
-| 7 | No secrets are stored in the repo; `dist/` and `.build/` stay absent from `git status`. | **PASS** | Production Command Mode delegates authentication to Codex and never reads OAuth credential files. Settings serialization excludes secret/transient fields; build artifacts remain ignored. |
+| 6 | `bash scripts/codex-test.sh` passes MicAICore tests covering command routing, Codex CLI invocation, and injected insertion strategies. | **PASS** | 2026-09-24: 215 tests in 33 suites passed, including `CommandEngineTests`, `CommandPipelineTests`, `CodexCLIClientTests`, `AdaptiveTextInsertionCoordinatorTests`, `TextInsertionCoordinatorTests`, plus new `HotkeyCaptureTests` and `LocalMetricsTests`. |
+| 7 | No secrets are stored in the repo; `dist/` and `.build/` stay absent from `git status`. | **PASS** | 2026-09-24: pattern scan of every tracked file for API-key, JWT, GitHub/Slack token, AWS key and private-key shapes found nothing (file names only were printed); no audio, credential, database or log files are tracked; `git check-ignore dist .build` matched both; the bundle contains only the executable, `Info.plist`, `MicAI.icns` and the signature. The app never instantiates `CodexAuthFileLoader`; the Codex CLI owns authentication. |
+
+Rows 2–5 need a person at the Mac (microphone, speech, TCC prompts). New since
+2026-08-31 and relevant to them: the HUD now shows "Cancelled" after Esc, the
+Activity view reports median and worst release-to-insertion per mode (use it for
+row 3's timings), and onboarding can record the command hotkey directly.
+
+Known friction: `dist/MicAI.app` is ad-hoc signed, so every rebuild changes its
+code identity and macOS drops the Accessibility grant. Re-grant Accessibility
+after each build before running rows 3–5.
 
 ## Manual verification runbook
 
@@ -120,10 +129,10 @@ credential values, request bodies, or token/path contents.
 
 ## Final automated validation
 
-All four required scripts passed on 2026-07-27:
+All four required scripts passed on 2026-09-24 on `integrate/m7-9`:
 
-- `bash scripts/codex-test.sh`: PASS — 79 tests in 13 suites.
+- `bash scripts/codex-test.sh`: PASS — 215 tests in 33 suites.
 - `bash scripts/codex-typecheck.sh`: PASS — debug build completed.
 - `bash scripts/codex-lint.sh`: PASS — strict format lint exited zero.
 - `bash scripts/codex-build.sh`: PASS — release build assembled and ad-hoc
-  signed `dist/MicAI.app`.
+  signed `dist/MicAI.app`; `codesign --verify --deep --strict` passed.
