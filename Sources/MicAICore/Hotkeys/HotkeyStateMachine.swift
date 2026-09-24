@@ -1,3 +1,5 @@
+import Foundation
+
 public enum HotkeyInputEvent: Sendable, Equatable {
   case pressed(isRepeat: Bool)
   case released

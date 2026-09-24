@@ -322,8 +322,8 @@ struct GeneralSettingsPane: View {
     case .toggle:
       "Press the dictation key once to start and again to stop."
     case .hybrid:
-      "Hold the dictation key to talk, or tap it once to keep recording hands-free until you press "
-        + "it again."
+      "Hold the dictation key to talk, or tap it once to keep recording hands-free until "
+        + "you press it again."
     }
   }
 
@@ -338,7 +338,11 @@ struct GeneralSettingsPane: View {
 
   static let dictationHotkeys: [Hotkey] = [.rightOption, .controlOptionSpace, .commandShiftSpace]
   static let commandHotkeys: [Hotkey] = [.controlOptionSpace, .commandShiftSpace]
-  static let translateHotkeys: [Hotkey] = [.controlOptionT, .commandShiftSpace, .controlOptionSpace]
+  static let translateHotkeys: [Hotkey] = [
+    .controlOptionT,
+    .commandShiftSpace,
+    .controlOptionSpace,
+  ]
   static let askHotkeys: [Hotkey] = [.controlOptionA, .commandShiftSpace, .controlOptionSpace]
 }
 

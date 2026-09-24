@@ -72,8 +72,8 @@ struct AskAnswerView: View {
 
       HStack(spacing: 8) {
         Label(footnote(for: answer), systemImage: MicAIMode.ask.symbol)
-        .font(.caption)
-        .foregroundStyle(.secondary)
+          .font(.caption)
+          .foregroundStyle(.secondary)
         Spacer()
         Button("Dismiss") {
           appModel.pendingAnswer = nil

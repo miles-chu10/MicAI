@@ -196,8 +196,8 @@ struct OnboardingView: View {
           "Find MicAI in the list and switch it on. You may need to quit and reopen MicAI "
             + "afterwards."
         )
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
     case .speechModel:
       header("laptopcomputer", "Download the speech model")
@@ -228,8 +228,8 @@ struct OnboardingView: View {
         "Clean-up, Command, Translate and Ask AI need a language model. Choose one in Settings "
           + "whenever you like."
       )
-        .font(.caption)
-        .foregroundStyle(.secondary)
+      .font(.caption)
+      .foregroundStyle(.secondary)
     }
   }
 
