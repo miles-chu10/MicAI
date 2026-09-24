@@ -163,7 +163,7 @@ struct OnboardingView: View {
   private var commandStep: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text(
-        "AI Commands use your existing Codex CLI sign-in at command time. MicAI treats that credential as read-only and never displays or stores its values."
+        "AI Commands run through your signed-in Codex CLI using your ChatGPT subscription. MicAI never reads, displays, or stores OAuth token values."
       )
       LabeledContent(
         "Command hotkey",
@@ -171,9 +171,9 @@ struct OnboardingView: View {
           ?? "Choose one in Settings"
       )
       LabeledContent(
-        "ChatGPT model",
+        "Codex model",
         value: appModel.settingsStore.settings.llmModel.isEmpty
-          ? "Choose one in Settings" : appModel.settingsStore.settings.llmModel
+          ? "Subscription default" : appModel.settingsStore.settings.llmModel
       )
       Text(appModel.providerStatus.summary)
         .foregroundStyle(.secondary)

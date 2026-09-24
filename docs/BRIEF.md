@@ -42,21 +42,16 @@ public API from the resolved package sources under `.build/checkouts/` before wr
 the spec's integration section — do not invent method names.
 
 LLM (AI Commands + optional dictation post-processing): the user's ChatGPT
-subscription via OAuth, not a metered API key.
-- Reuse the Codex CLI credential at `~/.codex/auth.json` (fields include
-  `tokens.access_token`, `tokens.account_id`, `tokens.refresh_token`). The Codex CLI
-  keeps it refreshed; MicAI re-reads the file on each session and on a 401 re-reads
-  once before surfacing an error. Do NOT implement an OAuth browser flow in the
-  prototype; document it as P1.
-- Endpoint: `https://chatgpt.com/backend-api/codex/responses` (Responses API shape,
-  streaming SSE), headers `Authorization: Bearer <access_token>`,
-  `chatgpt-account-id: <account_id>`, `OpenAI-Beta: responses=experimental`,
-  `originator: codex_cli_rs`, plus a random `session_id` UUID. Verify the exact
-  request shape against the installed codex-cli 0.144.6 (open source) rather than
-  guessing; if the endpoint proves unusable from a third-party app, fall back to
-  `OPENAI_API_KEY` from the environment (never written to disk) and record the
-  finding in SPEC.md.
-- Default model: the subscription's default GPT model; make it a settings string.
+subscription through the signed-in Codex CLI, not a metered API key or a private
+backend impersonation.
+- Run `codex exec` non-interactively with `--ephemeral`, a read-only sandbox, the
+  shell and web-search tools disabled, and an isolated temporary working directory.
+  Send the JSON-encoded instruction and selected text over stdin so user content
+  never appears in process arguments.
+- Never read, copy, decode, refresh, or write `~/.codex/auth.json`. Codex owns login,
+  workspace selection, transport, and token refresh.
+- Leave the model override blank to use the Codex subscription default. A Settings
+  string may pin a supported Codex model for a command operation.
 
 ## Hard constraints (verified on this machine, 2026-07-21)
 
@@ -67,15 +62,15 @@ subscription via OAuth, not a metered API key.
   --deep -s -`). No storyboards, no xibs, no asset catalogs requiring actool.
 - Swift toolchain comes from swiftly (`~/.swiftly`); assume Swift 6.x with
   `swift build` available. Target macOS 14+ so FluidAudio and MenuBarExtra work.
-- Text insertion: save clipboard → set transcript → synthesize Cmd+V via CGEvent →
-  restore clipboard after a short delay. Reading the current selection for AI
-  Commands: synthesize Cmd+C with clipboard save/restore. Both need Accessibility
-  permission (`AXIsProcessTrusted`); prompt and deep-link to System Settings.
+- Text insertion: first use the focused Accessibility element's selected-text API so
+  ordinary insertion does not touch the clipboard. If the target rejects direct
+  insertion, save clipboard → set transcript → synthesize Cmd+V via CGEvent → restore
+  clipboard after a short delay. Selection capture still uses guarded Cmd+C.
 - Package layout: `MicAICore` library target (audio, ASR, LLM client, command engine —
   platform-agnostic where possible, for the future iOS app) and `MicAI` executable
   target (menu bar UI, hotkeys, insertion — AppKit-dependent). Tests on MicAICore.
-- Secrets: never write tokens or keys to the repo or any dotfile; `auth.json` is
-  read-only input. `.env` files are off-limits.
+- Secrets: never write tokens or keys to the repo or any dotfile. MicAI does not read
+  Codex credential files. `.env` files are off-limits.
 - Repo conventions already scaffolded: `src/`, `docs/`, `scripts/`, `AGENTS.md`,
   `CLAUDE.md`. Put the Swift package at repo root (`Package.swift`, `Sources/`,
   `Tests/`); `src/` may be removed. Keep `scripts/codex-build.sh`,
@@ -91,10 +86,10 @@ subscription via OAuth, not a metered API key.
    and inserts the text into TextEdit (or any focused text field) within ~2s for a
    10s utterance.
 4. With text selected, the command hotkey + "make this uppercase" (spoken) replaces
-   the selection with the LLM result using ChatGPT-subscription OAuth.
+   the selection with the result from the signed-in Codex CLI and ChatGPT subscription.
 5. Esc cancels a recording without inserting anything.
 6. `bash scripts/codex-test.sh` runs green unit tests for MicAICore (command routing,
-   auth.json parsing, clipboard-restore logic with injected pasteboard).
+   ephemeral Codex CLI invocation, direct insertion, and guarded clipboard fallback).
 7. No secrets on disk; `git status` clean of build artifacts (`dist/`, `.build/`
    ignored).
 
@@ -105,7 +100,7 @@ subscription via OAuth, not a metered API key.
    with acceptance criteria, out-of-scope list, success metrics, risks.
 2. `docs/SPEC.md` — architecture diagram (mermaid), module breakdown with
    responsibilities and public interfaces, audio/ASR/LLM data flow, the verified
-   FluidAudio API integration section, the verified ChatGPT-OAuth request contract,
+   FluidAudio API integration section, the verified Codex CLI subscription contract,
    permission flows, error taxonomy, build/packaging design for the no-Xcode
    constraint, test strategy.
 3. `docs/PLAN.md` — ordered implementation milestones (each independently runnable),

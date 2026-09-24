@@ -25,3 +25,7 @@ public protocol KeyboardSynthesizing: Sendable {
 public protocol TargetValidating: Sendable {
   func isCurrent(_ target: TargetIdentity) async -> Bool
 }
+
+public protocol DirectTextInserting: Sendable {
+  func insert(_ text: String, into target: TargetIdentity) async -> Bool
+}

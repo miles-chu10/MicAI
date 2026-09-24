@@ -12,6 +12,7 @@ public enum MicAIError: Error, Equatable, Sendable {
   case modelDownloadFailed
   case asrNotInitialized
   case asrFailed
+  case codexCLIUnavailable
   case credentialMissing
   case credentialMalformed
   case llmUnauthorized
@@ -52,8 +53,10 @@ extension MicAIError: LocalizedError {
       "The speech model is not ready."
     case .asrFailed:
       "Speech recognition failed."
+    case .codexCLIUnavailable:
+      "Install the Codex CLI before using ChatGPT Command Mode."
     case .credentialMissing:
-      "Sign in with Codex before using AI Commands."
+      "Sign in to the Codex CLI with ChatGPT before using AI Commands."
     case .credentialMalformed:
       "The Codex credential file could not be read."
     case .llmUnauthorized:

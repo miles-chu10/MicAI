@@ -28,10 +28,6 @@ public struct CommandEngine: CommandExecuting, Sendable {
     guard !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw MicAIError.asrFailed
     }
-    guard !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      throw MicAIError.llmServerFailure
-    }
-
     let output = try await transformer.transform(
       LLMRequest(
         instruction: instruction,

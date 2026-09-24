@@ -54,7 +54,6 @@ public struct Hotkey: Codable, Hashable, Sendable {
 }
 
 public enum AppSettingsValidationError: Error, Equatable, Sendable {
-  case emptyModel
   case duplicateHotkeys
   case unusableHotkey
 }
@@ -62,8 +61,6 @@ public enum AppSettingsValidationError: Error, Equatable, Sendable {
 extension AppSettingsValidationError: LocalizedError {
   public var errorDescription: String? {
     switch self {
-    case .emptyModel:
-      "Enter an LLM model."
     case .duplicateHotkeys:
       "Dictation and command hotkeys must be different."
     case .unusableHotkey:
@@ -99,9 +96,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
   public func validated() throws -> AppSettings {
     let trimmedModel = llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
-    if commandHotkey != nil, trimmedModel.isEmpty {
-      throw AppSettingsValidationError.emptyModel
-    }
     guard commandHotkey != dictationHotkey else {
       throw AppSettingsValidationError.duplicateHotkeys
     }

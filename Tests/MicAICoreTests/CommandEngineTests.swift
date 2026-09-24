@@ -63,12 +63,13 @@ struct CommandEngineTests {
   }
 
   @Test
-  func blankModelFailsAsServerFailure() async {
-    let engine = CommandEngine(transformer: FakeTransformer(output: "ignored"))
+  func blankModelUsesProviderDefault() async throws {
+    let transformer = FakeTransformer(output: "done")
+    let engine = CommandEngine(transformer: transformer)
 
-    await expectFailure(is: .llmServerFailure) {
-      try await engine.execute(instruction: "do it", selectedText: nil, model: "  ")
-    }
+    _ = try await engine.execute(instruction: "do it", selectedText: nil, model: "  ")
+
+    #expect(await transformer.lastRequest?.model == "  ")
   }
 
   @Test

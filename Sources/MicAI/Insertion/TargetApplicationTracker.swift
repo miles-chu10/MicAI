@@ -2,7 +2,7 @@ import AppKit
 @preconcurrency import ApplicationServices
 import MicAICore
 
-actor TargetApplicationTracker: TargetValidating {
+actor TargetApplicationTracker: DirectTextInserting, TargetValidating {
   private struct FocusSnapshot: @unchecked Sendable {
     let element: AXUIElement
     let selectedRange: CFRange
@@ -61,6 +61,21 @@ actor TargetApplicationTracker: TargetValidating {
       return
     }
     focusSnapshots.removeValue(forKey: focusToken)
+  }
+
+  func insert(_ text: String, into target: TargetIdentity) async -> Bool {
+    guard await isCurrent(target),
+      let focusToken = target.focusToken,
+      let snapshot = focusSnapshots[focusToken]
+    else {
+      return false
+    }
+
+    return AXUIElementSetAttributeValue(
+      snapshot.element,
+      kAXSelectedTextAttribute as CFString,
+      text as CFString
+    ) == .success
   }
 
   private nonisolated static func captureFocus(

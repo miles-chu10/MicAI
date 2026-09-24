@@ -62,7 +62,7 @@ Acceptance criteria:
 
 - First launch presents a guided flow for Microphone, Accessibility, and the ASR model.
 - The Microphone step triggers the system permission request and shows granted, denied, or not-determined state.
-- The Accessibility step explains that global hotkeys and synthesized copy/paste require access, can trigger the system prompt, and provides a System Settings action.
+- The Accessibility step explains that global hotkeys, direct insertion, selection capture, and paste fallback require access, can trigger the system prompt, and provides a System Settings action.
 - The model step downloads Parakeet TDT 0.6b v2 with visible progress and distinguishes downloading, compiling/loading, ready, and failed states.
 - The user cannot finish onboarding with a hidden blocking state; skipped or denied steps remain visible in Settings.
 
@@ -78,7 +78,7 @@ Acceptance criteria:
 - Parakeet TDT 0.6b v2 transcribes locally; only light deterministic cleanup runs by default.
 - The transcript is inserted into TextEdit or another focused text field.
 - A 10-second utterance is inserted within approximately two seconds after release on the target machine.
-- The pre-existing clipboard is restored unless another process changes it during the insertion transaction.
+- Direct insertion leaves the clipboard untouched; paste fallback restores the pre-existing clipboard unless another process changes it during the transaction.
 
 ### US-3: Dictate in toggle mode
 
@@ -101,7 +101,7 @@ Acceptance criteria:
 - The spoken instruction is transcribed locally.
 - The instruction and selected text, but not raw audio, are sent to the configured LLM.
 - `make this uppercase` replaces the selected text with the returned transformation.
-- The client uses the read-only Codex credential when available, re-reads it once after a 401, and never writes or logs token values.
+- The client invokes the signed-in Codex CLI ephemerally and never reads, writes, or logs OAuth token values.
 - Empty, failed, cancelled, or incomplete LLM output does not replace the selection.
 
 ### US-5: Draft with an AI Command when nothing is selected
@@ -131,9 +131,9 @@ As a user, I want Settings to make the app understandable and adjustable.
 
 Acceptance criteria:
 
-- Settings exposes both hotkeys, dictation mode, LLM model string and provider status, ASR model status, and launch-at-login.
+- Settings exposes both hotkeys, dictation mode, an optional Codex model override, provider status, ASR model status, and launch-at-login.
 - Conflicting or unusable hotkey assignments are rejected with a specific message.
-- Provider status distinguishes missing credential, ready-to-attempt, retrying after 401, and request failure; it does not expose credential values.
+- Provider status distinguishes missing CLI/login, ready-to-attempt, authorization failure, and request failure without exposing credential values.
 - Launch-at-login reflects the system service state rather than only the last toggle value.
 
 ### US-8: Operate as a menu bar utility
@@ -158,16 +158,16 @@ Acceptance criteria:
 - Meeting capture, system-audio capture, diarization, or file transcription
 - Autonomous computer control or arbitrary spoken actions
 - Cloud sync, accounts, telemetry, payments, or App Store distribution
-- General direct editing through the Accessibility text API; P0 uses copy/paste synthesis
+- Persistent chat history, autonomous computer control, and commands that execute arbitrary system actions
 
 ## Success metrics
 
 ### Prototype gates
 
 - 100% success for `bash scripts/codex-build.sh` on a clean supported clone with network access, producing a verifiable ad-hoc-signed `dist/MicAI.app`.
-- All `bash scripts/codex-test.sh` MicAICore tests pass, including command routing, auth parsing, cancellation, SSE parsing, and guarded clipboard restoration.
+- All `bash scripts/codex-test.sh` MicAICore tests pass, including command routing, ephemeral CLI invocation, cancellation, direct insertion, and guarded clipboard restoration.
 - Five consecutive 10-second TextEdit dictations complete without crash or clipboard loss and meet the approximately two-second post-release target.
-- The uppercase selected-text command succeeds in five consecutive controlled trials using ChatGPT-subscription OAuth.
+- The uppercase selected-text command succeeds in five consecutive controlled trials through the signed-in Codex CLI.
 - Esc produces zero insertions in five trials at recording, transcription, and LLM-wait stages.
 - No token, key, audio capture, model artifact, `dist/` content, or `.build/` content appears in tracked files.
 
@@ -186,7 +186,7 @@ Acceptance criteria:
 | Focus changes while ASR/LLM work is pending | Text could enter the wrong app | Capture target identity, verify before insertion, withhold on mismatch |
 | Clipboard content is lossy or overwritten concurrently | User data loss | Snapshot every pasteboard item/type, compare change count before restore, dependency-injected tests |
 | FluidAudio API/model artifacts change | Build or runtime model preparation breaks | Exact package pin, adapter boundary, source-grounded API tests |
-| ChatGPT backend rejects third-party clients or changes contract | AI Commands unavailable | Specific provider error, one credential reload on 401, environment-only API-key fallback after verified incompatibility |
+| Codex CLI is missing, signed out, or changes its command contract | AI Commands unavailable | Specific provider error, versioned argument tests, synthetic subscription smoke test, no private-backend fallback |
 | Selected text contains prompt-like content | LLM follows text rather than user instruction | Strong developer instruction, serialize instruction and selection as distinct data, output-only validation |
 | Ad-hoc signing changes permission identity after rebuild | Permissions appear lost | Stable bundle identifier and bundle path; document local signing limitation |
 | Local ASR latency misses target | Dictation feels slower than typing | Warm models after onboarding, measure ASR separately, avoid LLM post-processing by default |

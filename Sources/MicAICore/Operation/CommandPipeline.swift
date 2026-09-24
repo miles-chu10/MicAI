@@ -13,6 +13,7 @@ public struct CommandResult: Sendable, Equatable {
 public actor CommandPipeline {
   private struct Context: Sendable {
     let selectedText: String?
+    let model: String
   }
 
   private let dictationPipeline: DictationPipeline
@@ -35,6 +36,7 @@ public actor CommandPipeline {
 
   public func begin(
     target: TargetIdentity,
+    model: String,
     levels: @escaping @Sendable (Float) -> Void,
     operationStarted: @escaping @Sendable (UUID) async -> Void = { _ in }
   ) async throws -> UUID {
@@ -50,7 +52,7 @@ public actor CommandPipeline {
       guard await coordinator.isCurrent(operationID: operationID) else {
         throw MicAIError.cancelled
       }
-      contexts[operationID] = Context(selectedText: selectedText)
+      contexts[operationID] = Context(selectedText: selectedText, model: model)
       return operationID
     } catch {
       await dictationPipeline.cancel(operationID: operationID)
@@ -60,7 +62,6 @@ public actor CommandPipeline {
 
   public func finish(
     operationID: UUID,
-    model: String,
     awaitingLLM: @escaping @Sendable () async -> Void = {}
   ) async throws -> CommandResult {
     guard let context = contexts.removeValue(forKey: operationID) else {
@@ -79,7 +80,7 @@ public actor CommandPipeline {
       return try await commandEngine.execute(
         instruction: instruction.text,
         selectedText: context.selectedText,
-        model: model
+        model: context.model
       )
     }
     guard

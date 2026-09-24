@@ -22,9 +22,10 @@ final class AppModel: ObservableObject {
   private let pipeline: DictationPipeline
   private let commandPipeline: CommandPipeline
   private let targetTracker: TargetApplicationTracker
-  private let insertionCoordinator: TextInsertionCoordinator
+  private let insertionCoordinator: AdaptiveTextInsertionCoordinator
   private let hudController: RecordingHUDController
   private let providerStatusRelay: ProviderStatusRelay
+  private let codexCLIAvailable: Bool
   private var operationID: UUID?
   private var operationAttemptID: UUID?
   private var operationStartupMode: MicAIMode?
@@ -49,6 +50,7 @@ final class AppModel: ObservableObject {
     let recognizer = FluidAudioRecognizer()
     let targetTracker = TargetApplicationTracker()
     let providerStatusRelay = ProviderStatusRelay()
+    let codexExecutableURL = CodexCLIClient.locateExecutable()
 
     self.settingsStore = settingsStore
     microphonePermission = MicrophonePermissionService()
@@ -56,6 +58,7 @@ final class AppModel: ObservableObject {
     launchAtLogin = LaunchAtLoginService()
     hudController = RecordingHUDController()
     self.providerStatusRelay = providerStatusRelay
+    codexCLIAvailable = codexExecutableURL != nil
     self.coordinator = coordinator
     self.recognizer = recognizer
     self.targetTracker = targetTracker
@@ -65,21 +68,24 @@ final class AppModel: ObservableObject {
       cleaner: TranscriptCleaner(),
       coordinator: coordinator
     )
-    let insertionCoordinator = TextInsertionCoordinator(
+    let clipboardInsertionCoordinator = TextInsertionCoordinator(
       pasteboard: SystemPasteboardAdapter(),
       keyboard: CGEventKeyboardSynthesizer(),
       targetValidator: targetTracker
     )
-    self.insertionCoordinator = insertionCoordinator
+    insertionCoordinator = AdaptiveTextInsertionCoordinator(
+      directInserter: targetTracker,
+      clipboardFallback: clipboardInsertionCoordinator
+    )
     commandPipeline = CommandPipeline(
       dictationPipeline: pipeline,
       commandEngine: CommandEngine(
-        transformer: ChatGPTResponsesClient(
-          credentialLoader: CodexAuthFileLoader(),
+        transformer: CodexCLIClient(
+          executableURL: codexExecutableURL,
           statusHandler: providerStatusRelay.send
         )
       ),
-      insertionCoordinator: insertionCoordinator,
+      insertionCoordinator: clipboardInsertionCoordinator,
       coordinator: coordinator
     )
     isOnboardingPresented = !settingsStore.hasSeenOnboarding
@@ -127,8 +133,7 @@ final class AppModel: ObservableObject {
       accessibilityGranted: accessibilityPermission.isTrusted,
       speechModelReady: modelState == .ready,
       commandHotkeyConfigured: settingsStore.settings.commandHotkey != nil,
-      languageModelConfigured: !settingsStore.settings.llmModel
-        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      commandProviderAvailable: codexCLIAvailable,
       operationActive: operationID != nil || operationAttemptID != nil
     )
   }
@@ -393,10 +398,8 @@ final class AppModel: ObservableObject {
     let attemptID = UUID()
     operationAttemptID = attemptID
     operationStartupMode = .command
-    guard settingsStore.settings.commandHotkey != nil,
-      !settingsStore.settings.llmModel
-        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    else {
+    let commandSettings = settingsStore.settings
+    guard commandSettings.commandHotkey != nil else {
       rejectCommandStart(with: .llmServerFailure)
       clearOperation(ifAttemptID: attemptID)
       return
@@ -432,6 +435,7 @@ final class AppModel: ObservableObject {
       let coordinator = self.coordinator
       _ = try await commandPipeline.begin(
         target: target,
+        model: commandSettings.llmModel,
         levels: { level in
           Task { @MainActor in
             appModel.inputLevel = level
@@ -490,7 +494,6 @@ final class AppModel: ObservableObject {
       let appModel = self
       let result = try await commandPipeline.finish(
         operationID: operationID,
-        model: settingsStore.settings.llmModel,
         awaitingLLM: {
           await MainActor.run {
             appModel.operationPhase = .awaitingLLM
@@ -620,11 +623,15 @@ final class AppModel: ObservableObject {
 
   private func refreshProviderStatus() {
     let settings = settingsStore.settings
-    let configured =
-      settings.commandHotkey != nil
-      && !settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let configured = settings.commandHotkey != nil
 
-    providerStatus = configured ? .readyToAttempt : .notConfigured
+    if !configured {
+      providerStatus = .notConfigured
+    } else if !codexCLIAvailable {
+      providerStatus = .failed(.codexCLIUnavailable)
+    } else {
+      providerStatus = .readyToAttempt
+    }
   }
 }
 

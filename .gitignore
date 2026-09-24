@@ -18,4 +18,8 @@ build/
 .swiftpm-config/
 .swiftpm-security/
 .research/
+.workflow/
+.idea/
+.cursor/hooks/state/
+dist-ios/
 *.xcodeproj

@@ -3,7 +3,7 @@ public enum ReadinessBlocker: String, Sendable, Equatable, CaseIterable {
   case accessibility
   case speechModel
   case commandHotkey
-  case languageModel
+  case commandProvider
   case activeOperation
 
   public var message: String {
@@ -16,8 +16,8 @@ public enum ReadinessBlocker: String, Sendable, Equatable, CaseIterable {
       "Prepare the local speech model."
     case .commandHotkey:
       "Choose an AI Command hotkey."
-    case .languageModel:
-      "Enter the ChatGPT model used for commands."
+    case .commandProvider:
+      "Install the Codex CLI for ChatGPT Command Mode."
     case .activeOperation:
       "Wait for the current operation to finish."
     }
@@ -45,7 +45,7 @@ public struct AppReadiness: Sendable, Equatable {
     accessibilityGranted: Bool,
     speechModelReady: Bool,
     commandHotkeyConfigured: Bool,
-    languageModelConfigured: Bool,
+    commandProviderAvailable: Bool,
     operationActive: Bool
   ) {
     var shared: [ReadinessBlocker] = []
@@ -66,8 +66,8 @@ public struct AppReadiness: Sendable, Equatable {
     if !commandHotkeyConfigured {
       commandBlockers.append(.commandHotkey)
     }
-    if !languageModelConfigured {
-      commandBlockers.append(.languageModel)
+    if !commandProviderAvailable {
+      commandBlockers.append(.commandProvider)
     }
 
     dictation = FeatureReadiness(blockers: shared)

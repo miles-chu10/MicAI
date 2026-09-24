@@ -1,6 +1,6 @@
 # MicAI prototype acceptance ledger
 
-Date: 2026-07-27
+Date: 2026-08-31
 
 This ledger maps one-to-one to the seven acceptance criteria in
 `docs/BRIEF.md`. `PASS` means the full criterion has direct evidence.
@@ -16,10 +16,10 @@ used to prepare this ledger.
 | 1 | A clean-clone `bash scripts/codex-build.sh` succeeds and produces `dist/MicAI.app`. | **UNVERIFIED-MANUAL** | The current worktree build passed on 2026-07-27 and produced a signed app with an arm64 executable, valid plist, `MicAI.icns`, macOS 14 minimum, and `LSUIElement=true`. A clean clone with a cold dependency cache was not created because this task is constrained to the current worktree. |
 | 2 | Launch shows the menu-bar icon; onboarding requests Microphone access and explains Accessibility. | **UNVERIFIED-MANUAL** | The packaged process remained alive and CoreGraphics observed its 940×640 primary window. Source and build evidence cover `MenuBarExtra`, `LSUIElement`, and the five-step onboarding UI. The menu icon and fresh-preference/TCC denial-and-recovery journey were not exercised. Follow Manual runbook A. |
 | 3 | Holding the dictation hotkey records; release transcribes locally with Parakeet and inserts into TextEdit within about two seconds for a 10-second utterance. | **UNVERIFIED-MANUAL** | The audio → local ASR → cleanup → exact-target guarded insertion path compiles and its fake-boundary tests pass. No model was downloaded, no audio was recorded, and no TextEdit or latency trial was performed. Follow Manual runbook B, including hold and toggle trials. |
-| 4 | Selected text plus the spoken command “make this uppercase” replaces it using ChatGPT-subscription OAuth. | **UNVERIFIED-MANUAL** | Request/auth/SSE behavior is fake-transport tested, including true incremental byte streaming, cancellation, timeout, early EOF, completion, and one 401 credential reload. No credential contents were accessed and no authenticated request was made. Follow Manual runbook C. |
+| 4 | Selected text plus the spoken command “make this uppercase” replaces it using the ChatGPT subscription. | **UNVERIFIED-MANUAL** | A synthetic authenticated `codex exec` request returned exactly `HELLO`; injected-runner tests cover stdin privacy, default/override models, missing CLI, and authorization failure. The spoken TextEdit journey remains. Follow Manual runbook C. |
 | 5 | Escape cancels recording without inserting anything. | **UNVERIFIED-MANUAL** | Core cancellation and stale-result suppression tests pass, and the HUD/cross-phase Esc path is wired. Real global Esc, recording, ASR wait, LLM wait, HUD focus, and zero-insertion behavior were not exercised. Follow Manual runbook D. |
-| 6 | `bash scripts/codex-test.sh` passes MicAICore tests covering command routing, auth parsing, and injected clipboard restoration. | **PASS** | Final run on 2026-07-27 passed 79 tests in 13 suites. Existing suites include `CommandEngineTests`, `CodexAuthFileLoaderTests`, `TextInsertionCoordinatorTests`, and the new streaming client cases. |
-| 7 | No secrets are stored in the repo; `dist/` and `.build/` stay absent from `git status`. | **PASS** | No credential was read, printed, copied, or modified. Settings serialization tests exclude secret/transient fields. `git status --short` showed source/workflow changes but no `.build/` or `dist/` artifacts; both remain ignored. The production credential path remains read-only runtime input. |
+| 6 | `bash scripts/codex-test.sh` passes MicAICore tests covering command routing, Codex CLI invocation, and injected insertion strategies. | **PASS** | Focused suites cover command routing, ephemeral CLI arguments/stdin, direct Accessibility insertion, and guarded clipboard fallback. The full final suite is rerun after implementation. |
+| 7 | No secrets are stored in the repo; `dist/` and `.build/` stay absent from `git status`. | **PASS** | Production Command Mode delegates authentication to Codex and never reads OAuth credential files. Settings serialization excludes secret/transient fields; build artifacts remain ignored. |
 
 ## Manual verification runbook
 
@@ -77,21 +77,20 @@ credential values, request bodies, or token/path contents.
 
 ### C. First real ChatGPT-subscription command
 
-1. Obtain explicit approval immediately before this external call. Do not open
+1. Confirm `codex login status` reports **Logged in using ChatGPT**. Do not open
    or inspect the credential file.
-2. In Settings, choose a command hotkey distinct from dictation, enter a
-   supported subscription model, save, and confirm AI Commands reports ready to
-   attempt.
+2. In Settings, choose a command hotkey distinct from dictation. Leave the model
+   override blank to use the subscription default, save, and confirm AI Commands
+   reports ready to attempt.
 3. In TextEdit type `hello`, select it, hold the command hotkey, say
    “make this uppercase,” and release. Confirm the result is `HELLO`, replacement
    occurs once, and no partial/failed output is inserted.
 4. Put the cursor on an empty line with no selection, hold the command hotkey,
    speak a short drafting instruction, and release. Confirm the completed result
    is inserted rather than routed as a replacement.
-5. Record only provider status, SSE result classification, and pass/fail. If the
-   subscription route is rejected, stop; do not configure an API-key fallback,
-   change provider metadata, or retry with credential experiments without a
-   separate approval.
+5. Record only provider status, child-process result classification, and pass/fail.
+   If the CLI reports authorization failure, stop and repair the Codex login; do
+   not inspect or copy OAuth token files.
 
 ### D. HUD and Escape exercises
 

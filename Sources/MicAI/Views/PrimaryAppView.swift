@@ -257,11 +257,11 @@ private struct CommandsView: View {
           icon: "sparkles",
           title: "AI Commands",
           subtitle:
-            "Only your spoken instruction and selected text are sent to the configured ChatGPT route."
+            "Your instruction and selected text run ephemerally through your signed-in Codex CLI."
         )
         ReadinessList(readiness: appModel.readiness.command)
         GroupBox("Provider") {
-          LabeledContent("ChatGPT subscription") {
+          LabeledContent("Codex CLI · ChatGPT subscription") {
             Text(appModel.providerStatus.summary)
               .multilineTextAlignment(.trailing)
           }

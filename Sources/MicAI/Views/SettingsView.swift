@@ -45,9 +45,9 @@ struct SettingsView: View {
           }
         }
         TextField(
-          "ChatGPT model",
+          "Codex model override",
           text: $draft.llmModel,
-          prompt: Text("Enter a supported subscription model")
+          prompt: Text("Optional — blank uses your Codex default")
         )
         LabeledContent("Provider", value: appModel.providerStatus.summary)
       }

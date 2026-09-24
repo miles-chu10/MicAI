@@ -39,7 +39,7 @@ struct AppSettingsTests {
   }
 
   @Test
-  func validationRejectsEmptyModelWhenCommandsAreEnabled() {
+  func validationAllowsSubscriptionDefaultWhenCommandsAreEnabled() throws {
     let settings = AppSettings(
       dictationHotkey: .rightOption,
       commandHotkey: .controlOptionSpace,
@@ -47,12 +47,7 @@ struct AppSettingsTests {
       llmModel: " \n "
     )
 
-    do {
-      _ = try settings.validated()
-      Issue.record("Expected validation to reject an empty model")
-    } catch {
-      #expect(error as? AppSettingsValidationError == .emptyModel)
-    }
+    #expect(try settings.validated().llmModel == "")
   }
 
   @Test

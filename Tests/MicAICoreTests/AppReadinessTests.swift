@@ -10,14 +10,12 @@ struct AppReadinessTests {
       accessibilityGranted: true,
       speechModelReady: true,
       commandHotkeyConfigured: false,
-      languageModelConfigured: false,
+      commandProviderAvailable: true,
       operationActive: false
     )
 
     #expect(readiness.dictation.isReady)
-    #expect(
-      readiness.command.blockers == [.commandHotkey, .languageModel]
-    )
+    #expect(readiness.command.blockers == [.commandHotkey])
   }
 
   @Test
@@ -27,7 +25,7 @@ struct AppReadinessTests {
       accessibilityGranted: false,
       speechModelReady: false,
       commandHotkeyConfigured: true,
-      languageModelConfigured: true,
+      commandProviderAvailable: true,
       operationActive: true
     )
 
@@ -36,5 +34,20 @@ struct AppReadinessTests {
     ]
     #expect(readiness.dictation.blockers == expected)
     #expect(readiness.command.blockers == expected)
+  }
+
+  @Test
+  func missingCodexCLIBlocksCommandsOnly() {
+    let readiness = AppReadiness(
+      microphoneGranted: true,
+      accessibilityGranted: true,
+      speechModelReady: true,
+      commandHotkeyConfigured: true,
+      commandProviderAvailable: false,
+      operationActive: false
+    )
+
+    #expect(readiness.dictation.isReady)
+    #expect(readiness.command.blockers == [.commandProvider])
   }
 }
