@@ -90,8 +90,10 @@ public actor DictationComposer {
       failure = outcome.failure
     }
 
+    // A cancelled dictation is never inserted, so it must not appear in
+    // History either.
     var historyEntryID: UUID?
-    if settings.historyEnabled {
+    if settings.historyEnabled, !Task.isCancelled {
       let entry = HistoryEntry(
         mode: mode,
         rawTranscript: rawText,

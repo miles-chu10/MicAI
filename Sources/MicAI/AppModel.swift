@@ -320,6 +320,7 @@ final class AppModel: ObservableObject {
         await cancelDictation()
       case (.command, .startRecording), (.translate, .startRecording),
         (.ask, .startRecording):
+        await discardDictationStartedByChord()
         await startSelectionMode(mode)
       case (.command, .stopRecording):
         await finishCommand()
@@ -332,6 +333,25 @@ final class AppModel: ObservableObject {
         await cancelSelectionMode(mode)
       }
     }
+  }
+
+  /// Right Option is also the right-hand ⌥ of every ⌥-chord, so typing, say,
+  /// ⌃⌥Space with it starts a dictation a moment before the command chord
+  /// completes. When that happens the dictation was never intended: drop it
+  /// without a "Cancelled" notice and let the chord's mode start.
+  private func discardDictationStartedByChord() async {
+    guard settingsStore.settings.dictationHotkey == .rightOption,
+      operationMode == .dictation,
+      operationPhase == .recording,
+      let operationID
+    else {
+      return
+    }
+    await pipeline.cancel(operationID: operationID)
+    hotkeyMonitor.reset(mode: .dictation)
+    operationPhase = .idle
+    inputLevel = 0
+    clearOperation()
   }
 
   private func startDictation() async {
@@ -438,12 +458,26 @@ final class AppModel: ObservableObject {
 
       // Never throws: on any refinement failure this returns the raw
       // transcript, so a network problem costs polish, not the dictation.
-      let composed = await composer.compose(
-        transcript: transcript,
-        mode: .dictation,
-        target: target,
-        settings: settings
-      )
+      // Registered with the coordinator so Esc also stops the codex child
+      // that refinement may be waiting on.
+      let composer = self.composer
+      let composeTask = Task {
+        await composer.compose(
+          transcript: transcript,
+          mode: .dictation,
+          target: target,
+          settings: settings
+        )
+      }
+      guard
+        await coordinator.registerCancellationHandler(
+          { composeTask.cancel() },
+          operationID: operationID
+        )
+      else {
+        throw MicAIError.cancelled
+      }
+      let composed = await composeTask.value
       guard await coordinator.isCurrent(operationID: operationID) else {
         throw MicAIError.cancelled
       }
@@ -535,6 +569,13 @@ final class AppModel: ObservableObject {
     operationStartupMode = mode
     guard isActive(mode) else {
       rejectStart(mode: mode, with: startBlocker(for: mode))
+      clearOperation(ifAttemptID: attemptID)
+      return
+    }
+    // Checked before recording so the user is not asked to speak, and their
+    // clipboard is not round-tripped, for a command that cannot run.
+    guard codexCLIAvailable else {
+      rejectStart(mode: mode, with: .codexCLIUnavailable)
       clearOperation(ifAttemptID: attemptID)
       return
     }
@@ -1054,6 +1095,12 @@ final class AppModel: ObservableObject {
 
   private func cancelActiveOperation() async {
     guard operationID != nil || operationAttemptID != nil else {
+      return
+    }
+    // Once insertion starts the paste may already be delivered, so a late Esc
+    // would report "Cancelled" for text that is in the document. The HUD
+    // stops offering Esc in this phase for the same reason.
+    guard operationPhase != .inserting else {
       return
     }
     guard operationID != nil else {

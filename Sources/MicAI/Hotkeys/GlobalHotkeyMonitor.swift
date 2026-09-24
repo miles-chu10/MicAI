@@ -130,7 +130,12 @@ final class GlobalHotkeyMonitor {
     chordTracker: inout HotkeyChordTracker
   ) -> Bool {
     if hotkey == .rightOption {
-      return event.keyCode == hotkey.keyCode && event.kind == .flagsChanged
+      guard event.keyCode == hotkey.keyCode, event.kind == .flagsChanged else {
+        return false
+      }
+      // Right Option pressed while ⌃, ⌘ or ⇧ is already down is the start of
+      // a chord, not dictation. Releases always match so state stays balanced.
+      return !event.optionDown || event.modifiers.isSubset(of: [.option])
     }
     guard let chordEvent = event.chordEvent else {
       return false

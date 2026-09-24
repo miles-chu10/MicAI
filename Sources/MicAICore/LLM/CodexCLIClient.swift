@@ -46,16 +46,26 @@ public struct FoundationCodexCommandRunner: CodexCommandRunning, Sendable {
     process.standardOutput = outputPipe
     process.standardError = errorPipe
 
+    // If codex exits before reading its prompt, writing to the pipe would
+    // raise SIGPIPE and kill MicAI. With the flag set the write fails with
+    // EPIPE instead, and the child's exit status reports the real problem.
+    _ = fcntl(inputPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+
     let processBox = CodexProcessBox(process)
+    let inputBox = CodexFileHandleBox(inputPipe.fileHandleForWriting)
     let outputBox = CodexFileHandleBox(outputPipe.fileHandleForReading)
     let errorBox = CodexFileHandleBox(errorPipe.fileHandleForReading)
 
     return try await withTaskCancellationHandler {
       try Task.checkCancellation()
       try process.run()
-      try inputPipe.fileHandleForWriting.write(contentsOf: standardInput)
-      try inputPipe.fileHandleForWriting.close()
 
+      // Written alongside the reads: a prompt larger than the pipe buffer
+      // would otherwise deadlock against a child blocked writing its output.
+      async let inputWritten: Void = Task.detached {
+        try? inputBox.handle.write(contentsOf: standardInput)
+        try? inputBox.handle.close()
+      }.value
       async let output = Task.detached {
         try outputBox.handle.readToEnd() ?? Data()
       }.value
@@ -66,6 +76,7 @@ public struct FoundationCodexCommandRunner: CodexCommandRunning, Sendable {
         processBox.waitUntilExit()
       }.value
 
+      _ = await inputWritten
       let result = try await CodexCommandResult(
         terminationStatus: status,
         standardOutput: output,

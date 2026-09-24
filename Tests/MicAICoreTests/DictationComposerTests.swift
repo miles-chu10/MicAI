@@ -98,6 +98,27 @@ struct DictationComposerTests {
   }
 
   @Test
+  func cancelledDictationIsNotRecorded() async throws {
+    let harness = try await Harness()
+    let composer = harness.composer
+    let settings = harness.settings()
+    let spoken = transcript("never mind")
+
+    let result = await Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      return await composer.compose(
+        transcript: spoken,
+        mode: .dictation,
+        target: nil,
+        settings: settings
+      )
+    }.value
+
+    #expect(await harness.history.all().isEmpty)
+    #expect(result.historyEntryID == nil)
+  }
+
+  @Test
   func historyDisabledRecordsNothing() async throws {
     let harness = try await Harness()
     var settings = harness.settings()
