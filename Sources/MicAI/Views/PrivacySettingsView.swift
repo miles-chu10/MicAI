@@ -54,13 +54,17 @@ struct PrivacySettingsView: View {
       }
 
       if let validationMessage = store.validationMessage {
-        Text(validationMessage)
-          .foregroundStyle(.red)
+        Label {
+          Text(validationMessage)
+        } icon: {
+          Image(systemName: "exclamationmark.triangle.fill")
+            .foregroundStyle(MicAIStatusColor.danger)
+        }
       }
 
       HStack {
         Spacer()
-        Button("Save") {
+        Button("Save", systemImage: "checkmark") {
           if store.save(draft) {
             draft = store.settings
             appModel.applySettings()
@@ -71,6 +75,7 @@ struct PrivacySettingsView: View {
             }
           }
         }
+        .micAIPrimaryButtonStyle()
         .keyboardShortcut(.defaultAction)
       }
     }

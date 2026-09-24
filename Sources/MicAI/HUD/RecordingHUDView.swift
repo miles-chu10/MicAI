@@ -48,9 +48,9 @@ struct RecordingHUDView: View {
         AudioLevelBars(level: inputLevel, tint: accentColor)
           .accessibilityHidden(true)
       } else if case .failed = phase {
-        Image(systemName: "exclamationmark")
+        Image(systemName: presentation.isCancellation ? "xmark" : "exclamationmark")
           .font(.system(size: 13, weight: .bold))
-          .foregroundStyle(MicAIStatusColor.attention)
+          .foregroundStyle(accentColor)
           .frame(width: 28, height: 28)
           .accessibilityHidden(true)
       } else {
@@ -97,10 +97,13 @@ struct RecordingHUDView: View {
   }
 
   private var accentColor: Color {
+    if phase == .failed(.cancelled) {
+      return .secondary
+    }
     if case .failed = phase {
       return MicAIStatusColor.attention
     }
-    return mode == .command ? .cyan : MicAIStatusColor.danger
+    return MicAIStatusColor.modeTint(mode)
   }
 
   private var inputPercentage: Int {
@@ -113,8 +116,15 @@ struct RecordingHUDPresentation: Equatable {
   let phase: OperationPhase
   let message: String?
 
+  var isCancellation: Bool {
+    phase == .failed(.cancelled)
+  }
+
   var title: String {
-    switch mode {
+    if isCancellation {
+      return "Cancelled"
+    }
+    return switch mode {
     case .command:
       "AI Command"
     case .translate:
@@ -140,6 +150,8 @@ struct RecordingHUDPresentation: Equatable {
       "Applying your command"
     case .inserting:
       "Inserting text"
+    case .failed(.cancelled):
+      "Nothing was inserted"
     case .failed:
       if let message, !message.isEmpty {
         message

@@ -38,14 +38,14 @@ struct GeneralSettingsView: View {
     VStack(spacing: 0) {
       Form {
         Section("Dictation") {
-          Picker(
-            "Hotkey",
-            selection: $draft.dictationHotkey
-          ) {
-            ForEach(Self.dictationHotkeys, id: \.self) { hotkey in
-              Text(hotkey.displayName).tag(hotkey)
-            }
-          }
+          HotkeyRecorderField(
+            title: "Hotkey",
+            hotkey: Binding(
+              get: { draft.dictationHotkey },
+              set: { if let hotkey = $0 { draft.dictationHotkey = hotkey } }
+            ),
+            allowsNone: false
+          )
 
           Picker(
             "Activation",
@@ -58,15 +58,7 @@ struct GeneralSettingsView: View {
         }
 
         Section("AI Commands") {
-          Picker(
-            "Hotkey",
-            selection: $draft.commandHotkey
-          ) {
-            Text("Not configured").tag(nil as Hotkey?)
-            ForEach(Self.commandHotkeys, id: \.self) { hotkey in
-              Text(hotkey.displayName).tag(hotkey as Hotkey?)
-            }
-          }
+          HotkeyRecorderField(title: "Hotkey", hotkey: $draft.commandHotkey)
           TextField(
             "Codex model override",
             text: $draft.llmModel,
@@ -76,15 +68,7 @@ struct GeneralSettingsView: View {
         }
 
         Section("AI Translate") {
-          Picker(
-            "Hotkey",
-            selection: $draft.translateHotkey
-          ) {
-            Text("Not configured").tag(nil as Hotkey?)
-            ForEach(Self.translateHotkeys, id: \.self) { hotkey in
-              Text(hotkey.displayName).tag(hotkey as Hotkey?)
-            }
-          }
+          HotkeyRecorderField(title: "Hotkey", hotkey: $draft.translateHotkey)
           TextField(
             "Translate into",
             text: $draft.translationTargetLanguage,
@@ -100,15 +84,7 @@ struct GeneralSettingsView: View {
         }
 
         Section("Ask AI") {
-          Picker(
-            "Hotkey",
-            selection: $draft.askHotkey
-          ) {
-            Text("Not configured").tag(nil as Hotkey?)
-            ForEach(Self.askHotkeys, id: \.self) { hotkey in
-              Text(hotkey.displayName).tag(hotkey as Hotkey?)
-            }
-          }
+          HotkeyRecorderField(title: "Hotkey", hotkey: $draft.askHotkey)
           Toggle("Always open answers in a window", isOn: $draft.askAlwaysOpensWindow)
           Text(
             "Ask a question and the answer opens in a window. Say something that is "
@@ -280,28 +256,9 @@ struct GeneralSettingsView: View {
     }
   }
 
-  private static let dictationHotkeys: [Hotkey] = [
-    .rightOption,
-    .controlOptionSpace,
-    .commandShiftSpace,
-  ]
 
-  private static let commandHotkeys: [Hotkey] = [
-    .controlOptionSpace,
-    .commandShiftSpace,
-  ]
 
-  private static let translateHotkeys: [Hotkey] = [
-    .controlOptionT,
-    .commandShiftSpace,
-    .controlOptionSpace,
-  ]
 
-  private static let askHotkeys: [Hotkey] = [
-    .controlOptionA,
-    .commandShiftSpace,
-    .controlOptionSpace,
-  ]
 }
 
 private struct SettingsStatusRow: View {

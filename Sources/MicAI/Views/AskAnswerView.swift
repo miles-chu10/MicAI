@@ -62,21 +62,28 @@ struct AskAnswerView: View {
           .frame(maxWidth: .infinity, alignment: .leading)
       }
 
-      HStack {
-        Button(didCopy ? "Copied" : "Copy Answer") {
-          NSPasteboard.general.clearContents()
-          NSPasteboard.general.setString(answer.answer, forType: .string)
-          didCopy = true
-        }
-        .keyboardShortcut("c", modifiers: .command)
+      MicAIActionCluster {
+        HStack {
+          Button(
+            didCopy ? "Copied" : "Copy Answer",
+            systemImage: didCopy ? "checkmark" : "doc.on.doc"
+          ) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(answer.answer, forType: .string)
+            didCopy = true
+          }
+          .micAIPrimaryButtonStyle()
+          .keyboardShortcut("c", modifiers: .command)
 
-        Spacer()
+          Spacer()
 
-        Button("Dismiss") {
-          appModel.pendingAnswer = nil
-          didCopy = false
+          Button("Dismiss") {
+            appModel.pendingAnswer = nil
+            didCopy = false
+          }
+          .micAISecondaryButtonStyle()
+          .keyboardShortcut(.cancelAction)
         }
-        .keyboardShortcut(.cancelAction)
       }
     }
     .padding(18)

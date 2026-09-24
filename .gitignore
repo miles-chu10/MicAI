@@ -27,3 +27,4 @@ dist-ios/
 .cursor/hooks/state/
 .cursor/settings.json
 .vscode/launch.json
+.remember/

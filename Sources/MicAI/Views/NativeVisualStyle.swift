@@ -1,3 +1,4 @@
+import MicAICore
 import SwiftUI
 
 struct MicAIActionCluster<Content: View>: View {
@@ -46,6 +47,23 @@ extension View {
     modifier(MicAIPanelSurfaceModifier(cornerRadius: cornerRadius))
   }
 
+  /// Opaque card for content. Glass stays on controls and floating chrome, per
+  /// the Liquid Glass guidance, so reading surfaces keep full contrast.
+  func micAICardSurface(cornerRadius: CGFloat = 12) -> some View {
+    background(.background, in: .rect(cornerRadius: cornerRadius))
+      .overlay {
+        RoundedRectangle(cornerRadius: cornerRadius)
+          .strokeBorder(.separator, lineWidth: 1)
+      }
+  }
+
+  /// Tinted banner for a message the user should act on.
+  func micAINoticeSurface(tint: Color, cornerRadius: CGFloat = 10) -> some View {
+    padding(12)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(tint.opacity(0.1), in: .rect(cornerRadius: cornerRadius))
+  }
+
   func micAIHUDSurface(cornerRadius: CGFloat = 16) -> some View {
     modifier(MicAIHUDSurfaceModifier(cornerRadius: cornerRadius))
   }
@@ -57,6 +75,21 @@ enum MicAIStatusColor {
   static var attention: Color { Color(nsColor: .systemOrange) }
   static var danger: Color { Color(nsColor: .systemRed) }
   static var accent: Color { Color.accentColor }
+
+  /// One tint per mode so the HUD tells dictation, commands, translation and
+  /// questions apart at a glance.
+  static func modeTint(_ mode: MicAIMode?) -> Color {
+    switch mode {
+    case .dictation, nil:
+      Color(nsColor: .systemRed)
+    case .command:
+      Color(nsColor: .systemTeal)
+    case .translate:
+      Color(nsColor: .systemIndigo)
+    case .ask:
+      Color(nsColor: .systemPurple)
+    }
+  }
 }
 
 private struct MicAIStatusSurfaceModifier: ViewModifier {

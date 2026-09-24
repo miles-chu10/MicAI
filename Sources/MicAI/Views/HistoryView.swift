@@ -84,24 +84,29 @@ struct HistoryView: View {
         }
       }
 
-      HStack {
-        Button(didCopy ? "Copied" : "Copy") {
-          NSPasteboard.general.clearContents()
-          NSPasteboard.general.setString(editedText, forType: .string)
-          didCopy = true
-        }
+      MicAIActionCluster {
+        HStack {
+          Button(didCopy ? "Copied" : "Copy", systemImage: didCopy ? "checkmark" : "doc.on.doc") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(editedText, forType: .string)
+            didCopy = true
+          }
+          .micAISecondaryButtonStyle()
 
-        Button("Save Correction") {
-          appModel.correctHistoryEntry(id: entry.id, to: editedText)
-        }
-        .disabled(editedText == entry.finalText)
-        .help("Saves the fix and teaches MicAI any terms it got wrong.")
+          Button("Save Correction", systemImage: "text.badge.checkmark") {
+            appModel.correctHistoryEntry(id: entry.id, to: editedText)
+          }
+          .micAIPrimaryButtonStyle()
+          .disabled(editedText == entry.finalText)
+          .help("Saves the fix and teaches MicAI any terms it got wrong.")
 
-        Spacer()
+          Spacer()
 
-        Button("Delete", role: .destructive) {
-          appModel.deleteHistoryEntry(id: entry.id)
-          selection = nil
+          Button("Delete", systemImage: "trash", role: .destructive) {
+            appModel.deleteHistoryEntry(id: entry.id)
+            selection = nil
+          }
+          .micAISecondaryButtonStyle()
         }
       }
 

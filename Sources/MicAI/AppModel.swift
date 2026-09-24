@@ -182,6 +182,10 @@ final class AppModel: ObservableObject {
     )
   }
 
+  var isCodexCLIInstalled: Bool {
+    codexCLIAvailable
+  }
+
   var isOperationActive: Bool {
     operationID != nil || operationAttemptID != nil
   }
@@ -461,10 +465,22 @@ final class AppModel: ObservableObject {
       return
     }
     await pipeline.cancel(operationID: operationID)
+    acknowledgeCancellation(mode: .dictation)
+  }
+
+  /// Returns to idle, then briefly shows "Cancelled" in the HUD so an Esc press
+  /// gets visible confirmation that nothing was inserted.
+  private func acknowledgeCancellation(mode: MicAIMode) {
     operationPhase = .idle
     errorMessage = nil
     inputLevel = 0
     clearOperation()
+    hudController.update(
+      mode: mode,
+      phase: .failed(.cancelled),
+      level: 0,
+      message: nil
+    )
   }
 
   /// Shared preamble for AI Commands, AI Translate and Ask AI.
@@ -884,10 +900,7 @@ final class AppModel: ObservableObject {
     }
     hotkeyMonitor.reset(mode: mode)
     await commandPipeline.cancel(operationID: operationID)
-    operationPhase = .idle
-    errorMessage = nil
-    inputLevel = 0
-    clearOperation()
+    acknowledgeCancellation(mode: mode)
   }
 
   private func complete(transcript: Transcript, diagnostic: String? = nil) {

@@ -34,14 +34,7 @@ struct StyleSettingsView: View {
             systemImage: "hand.raised.fill"
           )
           .font(.caption)
-          .foregroundStyle(.orange)
-        } else if draft.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-          Label(
-            "Set a ChatGPT model in General to enable clean-up.",
-            systemImage: "exclamationmark.circle"
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
+          .foregroundStyle(MicAIStatusColor.attention)
         }
       }
 

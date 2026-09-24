@@ -94,7 +94,7 @@ struct PrimaryAppView: View {
       )
       .font(.caption)
       .foregroundStyle(
-        appModel.readiness.dictation.isReady ? Color.green : Color.secondary
+        appModel.readiness.dictation.isReady ? MicAIStatusColor.ready : Color.secondary
       )
       Button("Review Setup") {
         appModel.showOnboarding()
@@ -142,21 +142,29 @@ private struct OverviewView: View {
           )
         }
 
+        VStack(alignment: .leading, spacing: 10) {
+          Text("System status")
+            .font(.headline)
+          PermissionStatusView(appModel: appModel)
+        }
+
         if let errorMessage = appModel.errorMessage {
-          Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-            .foregroundStyle(.orange)
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.orange.opacity(0.1), in: .rect(cornerRadius: 12))
+          Label {
+            Text(errorMessage)
+          } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+              .foregroundStyle(MicAIStatusColor.attention)
+          }
+          .micAINoticeSurface(tint: MicAIStatusColor.attention)
         }
 
         if !appModel.settingsStore.hasSeenOnboarding
           || !appModel.readiness.dictation.isReady
         {
-          Button("Complete Setup") {
+          Button("Complete Setup", systemImage: "checklist") {
             appModel.showOnboarding()
           }
-          .buttonStyle(.borderedProminent)
+          .micAIPrimaryButtonStyle()
           .controlSize(.large)
         }
       }
@@ -189,15 +197,11 @@ private struct WorkflowCard: View {
         ready.isReady ? "Ready" : "\(ready.blockers.count) setup item(s)",
         systemImage: ready.isReady ? "checkmark.circle.fill" : "circle.dashed"
       )
-      .foregroundStyle(ready.isReady ? Color.green : Color.secondary)
+      .foregroundStyle(ready.isReady ? MicAIStatusColor.ready : Color.secondary)
     }
     .padding(20)
-    .frame(maxWidth: .infinity, minHeight: 210, alignment: .leading)
-    .background(.background, in: .rect(cornerRadius: 14))
-    .overlay {
-      RoundedRectangle(cornerRadius: 14)
-        .stroke(.separator, lineWidth: 1)
-    }
+    .frame(maxWidth: .infinity, minHeight: 190, alignment: .leading)
+    .micAICardSurface(cornerRadius: 14)
   }
 }
 
@@ -348,13 +352,18 @@ private struct ReadinessList: View {
     GroupBox(readiness.isReady ? "Ready" : "Before you begin") {
       if readiness.isReady {
         Label("All required services are ready.", systemImage: "checkmark.circle.fill")
-          .foregroundStyle(.green)
+          .foregroundStyle(MicAIStatusColor.ready)
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(.vertical, 6)
       } else {
         VStack(alignment: .leading, spacing: 8) {
           ForEach(readiness.blockers, id: \.self) { blocker in
-            Label(blocker.message, systemImage: "circle")
+            Label {
+              Text(blocker.message)
+            } icon: {
+              Image(systemName: "exclamationmark.circle")
+                .foregroundStyle(MicAIStatusColor.attention)
+            }
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

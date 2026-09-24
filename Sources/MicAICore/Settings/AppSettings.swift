@@ -44,9 +44,17 @@ public struct Hotkey: Codable, Hashable, Sendable {
   /// Carbon `kVK_ANSI_*` constants; anything unlisted falls back to its number
   /// rather than guessing at a character that depends on keyboard layout.
   static let keyNames: [UInt16: String] = [
-    0: "A",
-    17: "T",
-    49: "Space",
+    0: "A", 11: "B", 8: "C", 2: "D", 14: "E", 3: "F", 5: "G", 4: "H", 34: "I",
+    38: "J", 40: "K", 37: "L", 46: "M", 45: "N", 31: "O", 35: "P", 12: "Q",
+    15: "R", 1: "S", 17: "T", 32: "U", 9: "V", 13: "W", 7: "X", 16: "Y", 6: "Z",
+    29: "0", 18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7",
+    28: "8", 25: "9",
+    49: "Space", 36: "Return", 48: "Tab", 51: "Delete",
+    27: "-", 24: "=", 33: "[", 30: "]", 41: ";", 39: "'", 43: ",", 47: ".",
+    44: "/", 42: "\\", 50: "`",
+    122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6", 98: "F7",
+    100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12",
+    123: "←", 124: "→", 125: "↓", 126: "↑",
   ]
 
   public var keyCode: UInt16
@@ -83,7 +91,7 @@ extension AppSettingsValidationError: LocalizedError {
     case .emptyOpenAITranscriptionModel:
       "Enter an OpenAI transcription model."
     case .duplicateHotkeys:
-      "Dictation and command hotkeys must be different."
+      "Each mode needs its own hotkey."
     case .unusableHotkey:
       "Choose a supported hotkey with modifiers."
     case .emptyTargetLanguage:
@@ -333,8 +341,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     case askAlwaysOpensWindow
   }
 
+  /// Same rules as recording a shortcut in Settings, so a hand-edited or
+  /// migrated preference cannot bind something the recorder would refuse.
   private static func isUsable(_ hotkey: Hotkey) -> Bool {
-    hotkey == .rightOption || !hotkey.modifiers.isEmpty
+    HotkeyCapture.resolve(keyCode: hotkey.keyCode, modifiers: hotkey.modifiers)
+      == .success(hotkey)
   }
 }
 

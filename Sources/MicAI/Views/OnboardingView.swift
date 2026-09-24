@@ -53,27 +53,30 @@ struct OnboardingView: View {
       .padding(.bottom, 28)
 
       Divider()
-      HStack {
-        if step != .welcome {
-          Button("Back") {
-            move(by: -1)
+      MicAIActionCluster {
+        HStack {
+          if step != .welcome {
+            Button("Back", systemImage: "chevron.left") {
+              move(by: -1)
+            }
+            .micAISecondaryButtonStyle()
           }
-        }
-        Spacer()
-        Button(step == .commands ? "Finish for Now" : "Continue") {
-          if step == .commands {
-            appModel.dismissOnboarding()
-            dismiss()
-          } else {
-            move(by: 1)
+          Spacer()
+          Button(step == .commands ? "Finish" : "Continue") {
+            if step == .commands {
+              appModel.dismissOnboarding()
+              dismiss()
+            } else {
+              move(by: 1)
+            }
           }
+          .micAIPrimaryButtonStyle()
+          .keyboardShortcut(.defaultAction)
         }
-        .buttonStyle(.borderedProminent)
-        .keyboardShortcut(.defaultAction)
       }
       .padding(20)
     }
-    .frame(width: 620, height: 500)
+    .frame(width: 620, height: 560)
     .interactiveDismissDisabled()
   }
 
@@ -107,11 +110,12 @@ struct OnboardingView: View {
           Button("Request Microphone Access") {
             appModel.requestMicrophonePermission()
           }
-          .buttonStyle(.borderedProminent)
+          .micAIPrimaryButtonStyle()
         } else if !appModel.microphonePermission.isGranted {
           Button("Open Microphone Settings") {
             appModel.microphonePermission.openSystemSettings()
           }
+          .micAISecondaryButtonStyle()
         }
       }
     }
@@ -131,13 +135,15 @@ struct OnboardingView: View {
         Button("Request Accessibility Access") {
           appModel.requestAccessibilityPermission()
         }
-        .buttonStyle(.borderedProminent)
+        .micAIPrimaryButtonStyle()
         Button("Open Accessibility Settings") {
           appModel.accessibilityPermission.openSystemSettings()
         }
+        .micAISecondaryButtonStyle()
         Button("Check Again") {
           appModel.refreshSystemStatus()
         }
+        .micAISecondaryButtonStyle()
       }
       Text(
         "macOS grants this in System Settings → Privacy & Security → Accessibility. The status may not update until you return to MicAI."
@@ -165,24 +171,29 @@ struct OnboardingView: View {
       Text(
         "AI Commands run through your signed-in Codex CLI using your ChatGPT subscription. MicAI never reads, displays, or stores OAuth token values."
       )
-      LabeledContent(
-        "Command hotkey",
-        value: appModel.settingsStore.settings.commandHotkey?.displayName
-          ?? "Choose one in Settings"
-      )
-      LabeledContent(
-        "Codex model",
-        value: appModel.settingsStore.settings.llmModel.isEmpty
-          ? "Subscription default" : appModel.settingsStore.settings.llmModel
-      )
-      Text(appModel.providerStatus.summary)
-        .foregroundStyle(.secondary)
+      HotkeyRecorderField(title: "Command hotkey", hotkey: commandHotkey)
+      PermissionStatusView(appModel: appModel)
       Text(
-        "You can finish setup with a blocker. MicAI will continue to show exactly what Dictation or AI Commands still need."
+        "You can finish setup with a blocker. MicAI keeps showing exactly what Dictation or AI Commands still need."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
     }
+  }
+
+  /// Saved immediately, like the permission buttons on the other steps, so
+  /// setup never ends with an unsaved choice.
+  private var commandHotkey: Binding<Hotkey?> {
+    Binding(
+      get: { appModel.settingsStore.settings.commandHotkey },
+      set: { hotkey in
+        var settings = appModel.settingsStore.settings
+        settings.commandHotkey = hotkey
+        if appModel.settingsStore.save(settings) {
+          appModel.applySettings()
+        }
+      }
+    )
   }
 
   private var microphoneStatus: String {
@@ -239,6 +250,6 @@ private struct StatusLine: View {
       title,
       systemImage: ready ? "checkmark.circle.fill" : "exclamationmark.circle"
     )
-    .foregroundStyle(ready ? Color.green : Color.orange)
+    .foregroundStyle(ready ? MicAIStatusColor.ready : MicAIStatusColor.attention)
   }
 }

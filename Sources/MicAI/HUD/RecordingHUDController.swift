@@ -39,9 +39,11 @@ final class RecordingHUDController: ObservableObject {
     }
     panel.orderFrontRegardless()
 
-    if case .failed = phase {
+    if case .failed(let error) = phase {
+      // A cancellation only needs acknowledging; a real failure needs reading.
+      let visibleFor: Duration = error == .cancelled ? .milliseconds(1_200) : .seconds(4)
       failureDismissTask = Task { [weak self] in
-        try? await Task.sleep(for: .seconds(4))
+        try? await Task.sleep(for: visibleFor)
         guard !Task.isCancelled else {
           return
         }
