@@ -110,7 +110,7 @@ final class GlobalHotkeyMonitor {
       )
       var action: HotkeyAction?
       if matched, let input = inputEvent(from: event) {
-        action = binding.machine.handle(input)
+        action = binding.machine.handle(input, at: event.timestamp)
       }
       bindings[mode] = binding
 
@@ -162,6 +162,9 @@ private struct GlobalHotkeyEvent: Sendable {
   let modifiers: Set<HotkeyModifier>
   let isRepeat: Bool
   let optionDown: Bool
+  /// Seconds since boot, from the event itself rather than when the main actor
+  /// got to it, so a busy main thread cannot turn a tap into a hold.
+  let timestamp: TimeInterval
 
   var chordEvent: HotkeyChordEvent? {
     switch kind {
@@ -185,6 +188,7 @@ private struct GlobalHotkeyEvent: Sendable {
     }
     keyCode = event.keyCode
     isRepeat = event.isARepeat
+    timestamp = event.timestamp
     optionDown = event.modifierFlags.contains(.option)
 
     var modifiers: Set<HotkeyModifier> = []

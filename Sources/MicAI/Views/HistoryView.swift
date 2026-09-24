@@ -7,6 +7,7 @@ import SwiftUI
 struct HistoryView: View {
   @ObservedObject var appModel: AppModel
   @State private var query = ""
+  @State private var modeFilter: MicAIMode?
   @State private var selection: HistoryEntry.ID?
   @State private var editedText = ""
   @State private var didCopy = false
@@ -14,47 +15,52 @@ struct HistoryView: View {
   var body: some View {
     NavigationSplitView {
       List(filteredEntries, selection: $selection) { entry in
-        VStack(alignment: .leading, spacing: 4) {
-          Text(entry.preview)
-            .lineLimit(2)
-          HStack(spacing: 6) {
-            Text(entry.createdAt, format: .dateTime.hour().minute().month().day())
-            if let applicationName = entry.applicationName {
-              Text("· \(applicationName)")
-            }
-            if let tone = entry.tone {
-              Text("· \(tone.displayName)")
-            }
-            if entry.mode == .command {
-              Image(systemName: "wand.and.stars")
-                .accessibilityLabel("AI Command")
-            }
-          }
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 2)
-        .tag(entry.id)
+        HistoryRow(entry: entry)
+          .tag(entry.id)
       }
-      .searchable(text: $query, prompt: "Search history")
-      .frame(minWidth: 260)
+      .safeAreaInset(edge: .top, spacing: 0) {
+        UsageSummary(stats: appModel.usage(since: Self.weekStart))
+      }
+      .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 460)
+      .overlay {
+        if filteredEntries.isEmpty {
+          ContentUnavailableView(
+            appModel.historyEntries.isEmpty ? "No history yet" : "No matches",
+            systemImage: "clock.arrow.circlepath",
+            description: Text(
+              appModel.historyEntries.isEmpty
+                ? "What you dictate will appear here."
+                : "Try another search or mode."
+            )
+          )
+        }
+      }
     } detail: {
       if let entry = selectedEntry {
         detail(for: entry)
       } else {
         ContentUnavailableView(
-          appModel.historyEntries.isEmpty ? "No history yet" : "Nothing selected",
-          systemImage: "clock.arrow.circlepath",
-          description: Text(
-            appModel.historyEntries.isEmpty
-              ? "Dictations you make will appear here."
-              : "Pick an entry to read, copy, or correct it."
-          )
+          "Nothing selected",
+          systemImage: "text.cursor",
+          description: Text("Pick an entry to read, copy or correct it.")
         )
       }
     }
+    .searchable(text: $query, placement: .sidebar, prompt: "Search")
+    .toolbar {
+      ToolbarItem(placement: .principal) {
+        Picker("Mode", selection: $modeFilter) {
+          Text("All").tag(MicAIMode?.none)
+          ForEach(MicAIMode.allCases, id: \.self) { mode in
+            Text(mode.shortName).tag(MicAIMode?.some(mode))
+          }
+        }
+        .pickerStyle(.segmented)
+        .fixedSize()
+      }
+    }
     .navigationTitle("History")
-    .frame(minWidth: 720, minHeight: 440)
+    .frame(minWidth: 820, minHeight: 500)
     // Re-seed the editor whenever the selection moves, so edits are never
     // carried from one entry onto another.
     .onChange(of: selection) { _, _ in
@@ -65,60 +71,97 @@ struct HistoryView: View {
 
   @ViewBuilder
   private func detail(for entry: HistoryEntry) -> some View {
-    VStack(alignment: .leading, spacing: 12) {
-      TextEditor(text: $editedText)
-        .font(.body)
-        .frame(minHeight: 160)
-        .overlay {
-          RoundedRectangle(cornerRadius: 6)
-            .stroke(.separator)
-        }
-
-      if entry.refined, entry.rawTranscript != entry.finalText {
-        DisclosureGroup("What you said") {
-          Text(entry.rawTranscript)
-            .font(.callout)
+    ScrollView {
+      VStack(alignment: .leading, spacing: 20) {
+        HStack(spacing: 8) {
+          ModeDot(mode: entry.mode)
+          Text(entry.mode.shortName)
+            .fontWeight(.semibold)
+          Text(metadata(for: entry))
             .foregroundStyle(.secondary)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.callout)
+
+        if entry.rawTranscript != entry.finalText {
+          block("Heard") {
+            Text(entry.rawTranscript)
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        block(entry.mode == .ask ? "Answer" : "Inserted") {
+          Text(entry.finalText)
+            .font(.title3)
+        }
+
+        block("Correct it") {
+          TextEditor(text: $editedText)
+            .font(.body)
+            .frame(minHeight: 90)
+            .scrollContentBackground(.hidden)
+            .padding(6)
+            .background(.background, in: .rect(cornerRadius: 8))
+            .overlay {
+              RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(.separator)
+            }
+            .accessibilityLabel("Corrected text")
+          Text("Changed names are added to Vocabulary, so MicAI gets them right next time.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+
+        HStack {
+          Button("Delete", role: .destructive) {
+            appModel.deleteHistoryEntry(id: entry.id)
+            selection = nil
+          }
+          Spacer()
+          Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(editedText, forType: .string)
+            didCopy = true
+          } label: {
+            Label(didCopy ? "Copied" : "Copy", systemImage: didCopy ? "checkmark" : "doc.on.doc")
+          }
+          Button("Save Correction") {
+            appModel.correctHistoryEntry(id: entry.id, to: editedText)
+          }
+          .keyboardShortcut(.defaultAction)
+          .disabled(editedText == entry.finalText)
         }
       }
-
-      HStack {
-        Button(didCopy ? "Copied" : "Copy") {
-          NSPasteboard.general.clearContents()
-          NSPasteboard.general.setString(editedText, forType: .string)
-          didCopy = true
-        }
-
-        Button("Save Correction") {
-          appModel.correctHistoryEntry(id: entry.id, to: editedText)
-        }
-        .disabled(editedText == entry.finalText)
-        .help("Saves the fix and teaches MicAI any terms it got wrong.")
-
-        Spacer()
-
-        Button("Delete", role: .destructive) {
-          appModel.deleteHistoryEntry(id: entry.id)
-          selection = nil
-        }
-      }
-
-      Text(footnote(for: entry))
-        .font(.caption)
-        .foregroundStyle(.secondary)
+      .padding(24)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .textSelection(.enabled)
     }
-    .padding()
     .onAppear { editedText = entry.finalText }
   }
 
-  private func footnote(for entry: HistoryEntry) -> String {
-    var parts: [String] = [entry.mode == .command ? "AI Command" : "Dictation"]
+  private func block<Content: View>(
+    _ title: String,
+    @ViewBuilder content: () -> Content
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(title)
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(.secondary)
+      content()
+    }
+  }
+
+  private func metadata(for entry: HistoryEntry) -> String {
+    var parts: [String] = []
+    if let name = entry.applicationName {
+      parts.append(name)
+    }
+    if let tone = entry.tone {
+      parts.append(tone.displayName)
+    }
+    parts.append(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
     if entry.audioDuration > 0 {
       parts.append(String(format: "%.1fs of audio", entry.audioDuration))
     }
-    parts.append(entry.refined ? "AI clean-up applied" : "Raw transcript")
     return parts.joined(separator: " · ")
   }
 
@@ -128,13 +171,89 @@ struct HistoryView: View {
 
   private var filteredEntries: [HistoryEntry] {
     let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedQuery.isEmpty else {
-      return appModel.historyEntries
-    }
     return appModel.historyEntries.filter { entry in
-      entry.finalText.localizedCaseInsensitiveContains(trimmedQuery)
+      if let modeFilter, entry.mode != modeFilter {
+        return false
+      }
+      guard !trimmedQuery.isEmpty else {
+        return true
+      }
+      return entry.finalText.localizedCaseInsensitiveContains(trimmedQuery)
         || entry.rawTranscript.localizedCaseInsensitiveContains(trimmedQuery)
         || (entry.applicationName?.localizedCaseInsensitiveContains(trimmedQuery) ?? false)
     }
+  }
+
+  static var weekStart: Date {
+    Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
+  }
+}
+
+private struct HistoryRow: View {
+  let entry: HistoryEntry
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 9) {
+      ModeDot(mode: entry.mode)
+      VStack(alignment: .leading, spacing: 3) {
+        Text(entry.preview)
+          .lineLimit(2)
+        Text(subtitle)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    }
+    .padding(.vertical, 3)
+  }
+
+  private var subtitle: String {
+    var parts: [String] = []
+    if let name = entry.applicationName {
+      parts.append(name)
+    }
+    if let tone = entry.tone {
+      parts.append(tone.displayName)
+    }
+    parts.append(entry.createdAt.formatted(.relative(presentation: .named)))
+    return parts.joined(separator: " · ")
+  }
+}
+
+/// This week's words, time saved and speaking rate, above the list.
+struct UsageSummary: View {
+  let stats: UsageStats
+
+  var body: some View {
+    HStack(spacing: 0) {
+      figure("\(stats.wordCount.formatted())", "words this week")
+      Divider().frame(height: 28)
+      figure(minutes, "saved vs typing")
+      Divider().frame(height: 28)
+      figure(stats.wordsPerMinute.map { "\($0)" } ?? "–", "words a minute")
+    }
+    .padding(.vertical, 10)
+    .frame(maxWidth: .infinity)
+    .background(.bar)
+    .help("Compared with typing at 40 words a minute. Counted from your history on this Mac.")
+  }
+
+  private var minutes: String {
+    let value = stats.minutesSaved
+    if value == 0 {
+      return "0 min"
+    }
+    return value < 1 ? "<1 min" : "\(Int(value.rounded())) min"
+  }
+
+  private func figure(_ value: String, _ label: String) -> some View {
+    VStack(spacing: 1) {
+      Text(value)
+        .font(.system(.title3, design: .rounded).weight(.semibold))
+        .monospacedDigit()
+      Text(label)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+    }
+    .frame(maxWidth: .infinity)
   }
 }

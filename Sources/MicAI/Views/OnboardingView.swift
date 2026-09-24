@@ -1,110 +1,167 @@
 import MicAICore
 import SwiftUI
 
-private enum OnboardingStep: Int, CaseIterable {
+private enum OnboardingStep: Int, CaseIterable, Identifiable {
   case welcome
   case microphone
   case accessibility
   case speechModel
-  case commands
+  case tryIt
+
+  var id: Self { self }
 
   var title: String {
     switch self {
     case .welcome:
-      "Welcome to MicAI"
+      "Welcome"
     case .microphone:
-      "Allow your microphone"
+      "Microphone"
     case .accessibility:
-      "Enable cross-app insertion"
+      "Accessibility"
     case .speechModel:
-      "Prepare local transcription"
-    case .commands:
-      "Configure AI Commands"
+      "Speech model"
+    case .tryIt:
+      "Try your shortcut"
     }
   }
 }
 
+/// First run: one requirement per step, the step list on the left so you can
+/// see how far there is to go, and a single obvious action on each step.
 struct OnboardingView: View {
   @ObservedObject var appModel: AppModel
   @State private var step: OnboardingStep = .welcome
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
-    VStack(spacing: 0) {
-      HStack(spacing: 6) {
-        ForEach(OnboardingStep.allCases, id: \.rawValue) { item in
-          Capsule()
-            .fill(
-              item.rawValue <= step.rawValue
-                ? Color.accentColor : Color.secondary.opacity(0.18)
-            )
-            .frame(height: 5)
-        }
-      }
-      .padding(24)
-
-      VStack(alignment: .leading, spacing: 20) {
-        Text(step.title)
-          .font(.largeTitle.weight(.semibold))
-        stepContent
-        Spacer()
-      }
-      .padding(.horizontal, 36)
-      .padding(.bottom, 28)
-
+    HStack(spacing: 0) {
+      stepList
       Divider()
-      HStack {
-        if step != .welcome {
-          Button("Back") {
-            move(by: -1)
+      VStack(alignment: .leading, spacing: 0) {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 18) {
+            content
           }
+          .padding(36)
+          .frame(maxWidth: .infinity, alignment: .leading)
         }
-        Spacer()
-        Button(step == .commands ? "Finish for Now" : "Continue") {
-          if step == .commands {
-            appModel.dismissOnboarding()
-            dismiss()
-          } else {
-            move(by: 1)
-          }
-        }
-        .buttonStyle(.borderedProminent)
-        .keyboardShortcut(.defaultAction)
+        Divider()
+        footer
       }
-      .padding(20)
     }
-    .frame(width: 620, height: 500)
+    .frame(width: 740, height: 500)
     .interactiveDismissDisabled()
   }
 
+  private var stepList: some View {
+    VStack(alignment: .leading, spacing: 18) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Set up MicAI")
+          .font(.headline)
+        Text("About a minute")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      .padding(.horizontal, 8)
+
+      VStack(alignment: .leading, spacing: 2) {
+        ForEach(OnboardingStep.allCases) { item in
+          Button {
+            step = item
+          } label: {
+            HStack(spacing: 10) {
+              badge(for: item)
+              Text(item.title)
+                .foregroundStyle(item == step ? .primary : .secondary)
+              Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(
+              item == step
+                ? AnyShapeStyle(HierarchicalShapeStyle.quaternary) : AnyShapeStyle(Color.clear),
+              in: .rect(cornerRadius: 7)
+            )
+            .contentShape(.rect)
+          }
+          .buttonStyle(.plain)
+          .accessibilityAddTraits(item == step ? .isSelected : [])
+        }
+      }
+      Spacer()
+    }
+    .padding(16)
+    .frame(width: 220)
+    .background(.background.secondary)
+  }
+
   @ViewBuilder
-  private var stepContent: some View {
-    switch step {
-    case .welcome:
-      IntroStep()
-    case .microphone:
-      microphoneStep
-    case .accessibility:
-      accessibilityStep
-    case .speechModel:
-      speechModelStep
-    case .commands:
-      commandStep
+  private func badge(for item: OnboardingStep) -> some View {
+    if isDone(item) {
+      Image(systemName: "checkmark.circle.fill")
+        .foregroundStyle(.green)
+        .frame(width: 20)
+    } else {
+      Text("\(item.rawValue + 1)")
+        .font(.caption.weight(.semibold))
+        .frame(width: 20, height: 20)
+        .overlay {
+          Circle().strokeBorder(item == step ? Color.primary : Color.secondary.opacity(0.4))
+        }
     }
   }
 
-  private var microphoneStep: some View {
-    VStack(alignment: .leading, spacing: 16) {
+  private func isDone(_ item: OnboardingStep) -> Bool {
+    switch item {
+    case .welcome:
+      step.rawValue > item.rawValue
+    case .microphone:
+      appModel.microphonePermission.isGranted
+    case .accessibility:
+      appModel.accessibilityPermission.isTrusted
+    case .speechModel:
+      appModel.modelState == .ready
+    case .tryIt:
+      appModel.lastResult != nil
+    }
+  }
+
+  @ViewBuilder
+  private var content: some View {
+    switch step {
+    case .welcome:
+      header("mic.fill", "Speak anywhere you type")
       Text(
-        "MicAI records only while you invoke a dictation or command hotkey. Ordinary dictation audio never leaves this Mac."
+        "Hold a key, talk, and polished text appears at your cursor, in any app. Speech is "
+          + "recognised on this Mac."
       )
-      StatusLine(
-        title: microphoneStatus,
-        ready: appModel.microphonePermission.isGranted
+      .foregroundStyle(.secondary)
+      VStack(alignment: .leading, spacing: 12) {
+        ForEach(MicAIMode.allCases, id: \.self) { mode in
+          HStack(spacing: 10) {
+            Image(systemName: mode.symbol)
+              .foregroundStyle(mode.tint)
+              .frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+              Text(mode.shortName).fontWeight(.medium)
+              Text(mode.summary)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            }
+          }
+        }
+      }
+    case .microphone:
+      header("mic.circle", "Let MicAI hear you")
+      Text(
+        "MicAI records only while you hold one of its shortcuts. Audio is transcribed on this Mac "
+          + "and never uploaded."
       )
+      .foregroundStyle(.secondary)
+      status("Microphone", ready: appModel.microphonePermission.isGranted)
       HStack {
         if appModel.microphonePermission.status == .undetermined {
-          Button("Request Microphone Access") {
+          Button("Allow Microphone") {
             appModel.requestMicrophonePermission()
           }
           .buttonStyle(.borderedProminent)
@@ -112,133 +169,148 @@ struct OnboardingView: View {
           Button("Open Microphone Settings") {
             appModel.microphonePermission.openSystemSettings()
           }
+          .buttonStyle(.borderedProminent)
         }
       }
-    }
-  }
-
-  private var accessibilityStep: some View {
-    VStack(alignment: .leading, spacing: 16) {
+    case .accessibility:
+      header("keyboard", "Let MicAI type where you’re typing")
       Text(
-        "Accessibility lets MicAI monitor the global hotkeys and synthesize Command-C and Command-V. It is required to preserve your clipboard and insert into the original app."
+        "MicAI pastes your words at the cursor, then puts your clipboard back the way it was. "
+          + "macOS asks you to allow Accessibility for that, and for the shortcuts to work in "
+          + "every app."
       )
-      StatusLine(
-        title: appModel.accessibilityPermission.isTrusted
-          ? "Accessibility is allowed" : "Accessibility is not allowed yet",
-        ready: appModel.accessibilityPermission.isTrusted
-      )
-      HStack {
-        Button("Request Accessibility Access") {
-          appModel.requestAccessibilityPermission()
-        }
-        .buttonStyle(.borderedProminent)
-        Button("Open Accessibility Settings") {
-          appModel.accessibilityPermission.openSystemSettings()
-        }
-        Button("Check Again") {
-          appModel.refreshSystemStatus()
-        }
-      }
-      Text(
-        "macOS grants this in System Settings → Privacy & Security → Accessibility. The status may not update until you return to MicAI."
-      )
-      .font(.caption)
       .foregroundStyle(.secondary)
-    }
-  }
-
-  private var speechModelStep: some View {
-    VStack(alignment: .leading, spacing: 16) {
+      status("Accessibility", ready: appModel.accessibilityPermission.isTrusted)
+      if !appModel.accessibilityPermission.isTrusted {
+        HStack {
+          Button("Open Accessibility Settings") {
+            appModel.requestAccessibilityPermission()
+            appModel.accessibilityPermission.openSystemSettings()
+          }
+          .buttonStyle(.borderedProminent)
+          Button("Check Again") {
+            appModel.refreshSystemStatus()
+          }
+        }
+        Text(
+          "Find MicAI in the list and switch it on. You may need to quit and reopen MicAI "
+            + "afterwards."
+        )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    case .speechModel:
+      header("laptopcomputer", "Download the speech model")
       Text(
-        "MicAI uses the Parakeet TDT 0.6b v2 Core ML model. Preparing it can download and compile model files, then all ordinary transcription runs locally."
+        "Downloaded once. After that, recognition works offline and nothing you say leaves this "
+          + "Mac."
       )
-      ModelStatusView(
-        state: appModel.modelState,
-        transcript: nil,
-        prepare: appModel.prepareModel
-      )
-    }
-  }
-
-  private var commandStep: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      Text(
-        "AI Commands use your existing Codex CLI sign-in at command time. MicAI treats that credential as read-only and never displays or stores its values."
-      )
-      LabeledContent(
-        "Command hotkey",
-        value: appModel.settingsStore.settings.commandHotkey?.displayName
-          ?? "Choose one in Settings"
-      )
-      LabeledContent(
-        "ChatGPT model",
-        value: appModel.settingsStore.settings.llmModel.isEmpty
-          ? "Choose one in Settings" : appModel.settingsStore.settings.llmModel
-      )
-      Text(appModel.providerStatus.summary)
+      .foregroundStyle(.secondary)
+      Picker("Language", selection: speechModelBinding) {
+        ForEach(SpeechModelChoice.allCases, id: \.self) { choice in
+          Text("\(choice.displayName) — \(choice.detail)").tag(choice)
+        }
+      }
+      .pickerStyle(.radioGroup)
+      ModelStatusView(state: appModel.modelState, prepare: appModel.prepareModel)
+    case .tryIt:
+      header("hand.tap", "Try it")
+      Text(tryItInstruction)
         .foregroundStyle(.secondary)
+      KeyCaps(appModel.settingsStore.settings.dictationHotkey)
+      if let lastResult = appModel.lastResult {
+        GroupBox("You dictated") {
+          Text(lastResult)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      }
       Text(
-        "You can finish setup with a blocker. MicAI will continue to show exactly what Dictation or AI Commands still need."
+        "Clean-up, Command, Translate and Ask AI need a language model. Choose one in Settings "
+          + "whenever you like."
       )
-      .font(.caption)
-      .foregroundStyle(.secondary)
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
   }
 
-  private var microphoneStatus: String {
-    switch appModel.microphonePermission.status {
-    case .undetermined:
-      "Microphone access has not been requested"
-    case .denied:
-      "Microphone access is denied"
-    case .granted:
-      "Microphone access is allowed"
+  private var footer: some View {
+    HStack {
+      if step != .welcome {
+        Button("Back") {
+          move(by: -1)
+        }
+      }
+      Spacer()
+      Button(step == .tryIt ? "Done" : "Continue") {
+        if step == .tryIt {
+          appModel.dismissOnboarding()
+          dismiss()
+        } else {
+          move(by: 1)
+        }
+      }
+      .buttonStyle(.borderedProminent)
+      .keyboardShortcut(.defaultAction)
+    }
+    .padding(16)
+  }
+
+  private func header(_ symbol: String, _ title: String) -> some View {
+    VStack(alignment: .leading, spacing: 14) {
+      Image(systemName: symbol)
+        .font(.system(size: 26, weight: .medium))
+        .foregroundStyle(.tint)
+        .frame(width: 52, height: 52)
+        .background(.quaternary, in: .rect(cornerRadius: 12))
+        .accessibilityHidden(true)
+      Text(title)
+        .font(.title.weight(.semibold))
+    }
+  }
+
+  private func status(_ title: String, ready: Bool) -> some View {
+    GroupBox {
+      LabeledContent(title) {
+        Label(
+          ready ? "Allowed" : "Not allowed yet",
+          systemImage: ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
+        )
+        .foregroundStyle(ready ? Color.green : Color.orange)
+      }
+      .padding(4)
+    }
+  }
+
+  /// Saves immediately: this is the only setting on the step, and the model
+  /// choice must be in effect before the download button is pressed.
+  private var speechModelBinding: Binding<SpeechModelChoice> {
+    Binding(
+      get: { appModel.settingsStore.settings.speechModel },
+      set: { choice in
+        var settings = appModel.settingsStore.settings
+        settings.speechModel = choice
+        if appModel.settingsStore.save(settings) {
+          appModel.applySettings()
+        }
+      }
+    )
+  }
+
+  private var tryItInstruction: String {
+    let settings = appModel.settingsStore.settings
+    let key = settings.dictationHotkey.displayName
+    switch settings.dictationActivationMode {
+    case .hold, .hybrid:
+      return "Click into any text field, hold \(key), say a sentence, and let go."
+    case .toggle:
+      return "Click into any text field, press \(key), say a sentence, and press it again."
     }
   }
 
   private func move(by offset: Int) {
-    guard
-      let next = OnboardingStep(rawValue: step.rawValue + offset)
-    else {
+    guard let next = OnboardingStep(rawValue: step.rawValue + offset) else {
       return
     }
     step = next
-  }
-}
-
-private struct IntroStep: View {
-  var body: some View {
-    VStack(alignment: .leading, spacing: 18) {
-      Label(
-        "Dictate locally in any app",
-        systemImage: "mic.and.signal.meter.fill"
-      )
-      Label(
-        "Transform selected text with a spoken command",
-        systemImage: "sparkles"
-      )
-      Label(
-        "Cancel safely with Escape before insertion",
-        systemImage: "escape"
-      )
-      Text(
-        "Setup covers Microphone, Accessibility, the local speech model, and optional ChatGPT commands."
-      )
-      .foregroundStyle(.secondary)
-    }
-    .font(.title3)
-  }
-}
-
-private struct StatusLine: View {
-  let title: String
-  let ready: Bool
-
-  var body: some View {
-    Label(
-      title,
-      systemImage: ready ? "checkmark.circle.fill" : "exclamationmark.circle"
-    )
-    .foregroundStyle(ready ? Color.green : Color.orange)
   }
 }

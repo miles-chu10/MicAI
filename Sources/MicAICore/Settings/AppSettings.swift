@@ -3,6 +3,10 @@ import Foundation
 public enum DictationActivationMode: String, Codable, CaseIterable, Sendable {
   case hold
   case toggle
+  /// Hold to talk, or tap once to keep recording hands-free until the next
+  /// press. Which one happened is decided on release, by how long the key was
+  /// down, so neither gesture needs a timer or a second key.
+  case hybrid
 
   public var displayName: String {
     switch self {
@@ -10,6 +14,53 @@ public enum DictationActivationMode: String, Codable, CaseIterable, Sendable {
       "Hold"
     case .toggle:
       "Toggle"
+    case .hybrid:
+      "Hold or tap"
+    }
+  }
+}
+
+/// Which service does the language work: clean-up, commands, translation and
+/// answers. Speech recognition is always on-device regardless.
+public enum LLMProvider: String, Codable, CaseIterable, Sendable {
+  /// The ChatGPT sign-in Codex already stored on this Mac.
+  case chatGPTSubscription
+  /// An OpenAI platform API key, kept in the macOS Keychain.
+  case openAIAPIKey
+
+  public var displayName: String {
+    switch self {
+    case .chatGPTSubscription:
+      "ChatGPT subscription"
+    case .openAIAPIKey:
+      "OpenAI API key"
+    }
+  }
+}
+
+/// The on-device Parakeet model. Both run locally; they trade language coverage
+/// for English accuracy.
+public enum SpeechModelChoice: String, Codable, CaseIterable, Sendable {
+  /// Parakeet TDT v2: English only, the most accurate for English.
+  case english
+  /// Parakeet TDT v3: 25 European languages, detected automatically.
+  case multilingual
+
+  public var displayName: String {
+    switch self {
+    case .english:
+      "English"
+    case .multilingual:
+      "Multilingual"
+    }
+  }
+
+  public var detail: String {
+    switch self {
+    case .english:
+      "Parakeet TDT v2. Best accuracy for English."
+    case .multilingual:
+      "Parakeet TDT v3. 25 European languages, detected as you speak."
     }
   }
 }
@@ -67,6 +118,18 @@ public struct Hotkey: Codable, Hashable, Sendable {
     }
     let keyName = Self.keyNames[keyCode] ?? "Key \(keyCode)"
     return modifierNames.joined() + keyName
+  }
+
+  /// One label per physical key, in the order macOS menus print them, for
+  /// drawing keycaps.
+  public var keyCaps: [String] {
+    if self == .rightOption {
+      return ["Right ⌥"]
+    }
+    let modifierNames = HotkeyModifier.displayOrder.compactMap { modifier in
+      modifiers.contains(modifier) ? modifier.symbol : nil
+    }
+    return modifierNames + [Self.keyNames[keyCode] ?? "Key \(keyCode)"]
   }
 }
 
@@ -133,6 +196,16 @@ public struct AppSettings: Codable, Equatable, Sendable {
   /// else is inserted at the cursor.
   public var askAlwaysOpensWindow: Bool
 
+  /// Which service does the language work.
+  public var llmProvider: LLMProvider
+  /// Which on-device recognizer to load.
+  public var speechModel: SpeechModelChoice
+  /// Extra rules the user wants every clean-up to follow ("Use British
+  /// spelling", "Never use exclamation marks"). Appended to the tone guidance.
+  public var customInstructions: String
+  /// Play the system sounds for start, finish and failure.
+  public var soundFeedback: Bool
+
   public init(
     dictationHotkey: Hotkey,
     commandHotkey: Hotkey?,
@@ -147,7 +220,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     translateHotkey: Hotkey? = nil,
     translationTargetLanguage: String = "",
     askHotkey: Hotkey? = nil,
-    askAlwaysOpensWindow: Bool = false
+    askAlwaysOpensWindow: Bool = false,
+    llmProvider: LLMProvider = .chatGPTSubscription,
+    speechModel: SpeechModelChoice = .english,
+    customInstructions: String = "",
+    soundFeedback: Bool = true
   ) {
     self.dictationHotkey = dictationHotkey
     self.commandHotkey = commandHotkey
@@ -163,6 +240,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     self.translationTargetLanguage = translationTargetLanguage
     self.askHotkey = askHotkey
     self.askAlwaysOpensWindow = askAlwaysOpensWindow
+    self.llmProvider = llmProvider
+    self.speechModel = speechModel
+    self.customInstructions = customInstructions
+    self.soundFeedback = soundFeedback
   }
 
   // Decoded field by field with defaults rather than synthesized, so settings
@@ -197,6 +278,16 @@ public struct AppSettings: Codable, Equatable, Sendable {
     askHotkey = try container.decodeIfPresent(Hotkey.self, forKey: .askHotkey)
     askAlwaysOpensWindow =
       try container.decodeIfPresent(Bool.self, forKey: .askAlwaysOpensWindow) ?? false
+    llmProvider =
+      try container.decodeIfPresent(LLMProvider.self, forKey: .llmProvider)
+      ?? .chatGPTSubscription
+    speechModel =
+      try container.decodeIfPresent(SpeechModelChoice.self, forKey: .speechModel)
+      ?? .english
+    customInstructions =
+      try container.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
+    soundFeedback =
+      try container.decodeIfPresent(Bool.self, forKey: .soundFeedback) ?? true
   }
 
   /// Refinement runs only with a model configured and privacy mode off.
@@ -275,6 +366,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     var validatedSettings = self
     validatedSettings.llmModel = trimmedModel
     validatedSettings.translationTargetLanguage = trimmedLanguage
+    validatedSettings.customInstructions = trimmed(customInstructions)
     validatedSettings.historyLimit = min(max(historyLimit, 1), 2_000)
     return validatedSettings
   }

@@ -1,4 +1,5 @@
 import AppKit
+import MicAICore
 import SwiftUI
 
 /// An Ask AI answer that was a question rather than content to type.
@@ -24,65 +25,84 @@ struct AskAnswerView: View {
       if let answer = appModel.pendingAnswer {
         content(for: answer)
       } else {
-        ContentUnavailableView(
-          "No answer yet",
-          systemImage: "bubble.left.and.text.bubble.right",
-          description: Text("Hold the Ask AI hotkey and ask a question.")
-        )
+        ContentUnavailableView {
+          Label("No answer yet", systemImage: MicAIMode.ask.symbol)
+        } description: {
+          if let hotkey = appModel.settingsStore.settings.askHotkey {
+            Text("Hold \(hotkey.displayName) and ask a question.")
+          } else {
+            Text("Turn on the Ask AI shortcut in Settings.")
+          }
+        }
       }
     }
-    .frame(minWidth: 460, minHeight: 320)
+    .frame(minWidth: 480, minHeight: 360)
     .navigationTitle("Ask AI")
   }
 
   @ViewBuilder
   private func content(for answer: AskAnswer) -> some View {
-    VStack(alignment: .leading, spacing: 14) {
-      VStack(alignment: .leading, spacing: 5) {
-        Text("You asked")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        Text(answer.question)
-          .font(.headline)
-          .textSelection(.enabled)
-      }
+    VStack(spacing: 0) {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 16) {
+          VStack(alignment: .leading, spacing: 4) {
+            Text("You asked")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+            Text(answer.question)
+              .font(.title3.weight(.semibold))
+          }
 
-      if answer.usedSelection {
-        Label("Answered using your selection as context", systemImage: "text.viewfinder")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+          if answer.usedSelection {
+            Label("Your selection was used as context", systemImage: "text.viewfinder")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+
+          Text(answer.answer)
+            .font(.body)
+            .lineSpacing(3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(22)
+        .textSelection(.enabled)
       }
 
       Divider()
 
-      ScrollView {
-        Text(answer.answer)
-          .font(.body)
-          .textSelection(.enabled)
-          .frame(maxWidth: .infinity, alignment: .leading)
-      }
-
-      HStack {
-        Button(didCopy ? "Copied" : "Copy Answer") {
-          NSPasteboard.general.clearContents()
-          NSPasteboard.general.setString(answer.answer, forType: .string)
-          didCopy = true
-        }
-        .keyboardShortcut("c", modifiers: .command)
-
+      HStack(spacing: 8) {
+        Label(footnote(for: answer), systemImage: MicAIMode.ask.symbol)
+        .font(.caption)
+        .foregroundStyle(.secondary)
         Spacer()
-
         Button("Dismiss") {
           appModel.pendingAnswer = nil
           didCopy = false
         }
         .keyboardShortcut(.cancelAction)
+        Button {
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.setString(answer.answer, forType: .string)
+          didCopy = true
+        } label: {
+          Label(didCopy ? "Copied" : "Copy", systemImage: didCopy ? "checkmark" : "doc.on.doc")
+        }
+        .keyboardShortcut("c", modifiers: .command)
+        .buttonStyle(.borderedProminent)
+        .tint(MicAIMode.ask.tint)
       }
+      .padding(.horizontal, 16)
+      .padding(.vertical, 12)
+      .background(.bar)
     }
-    .padding(18)
     // A new answer must not leave the previous answer's "Copied" state showing.
     .onChange(of: answer.id) { _, _ in
       didCopy = false
     }
+  }
+
+  private func footnote(for answer: AskAnswer) -> String {
+    answer.usedSelection
+      ? "Your selection wasn’t changed." : "Answered by \(appModel.providerName)"
   }
 }

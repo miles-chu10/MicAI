@@ -6,25 +6,37 @@ public struct RefinementRequest: Sendable, Equatable {
   public let tone: StyleTone
   /// Learned corrections, rendered as prompt context. See `VocabularyApplier`.
   public let vocabularyContext: String?
+  /// The user's own standing rules, from Settings > Style.
+  public let customInstructions: String?
   public let model: String
 
   public init(
     transcript: String,
     tone: StyleTone,
     vocabularyContext: String? = nil,
+    customInstructions: String? = nil,
     model: String
   ) {
     self.transcript = transcript
     self.tone = tone
     self.vocabularyContext = vocabularyContext
+    self.customInstructions = customInstructions
     self.model = model
   }
 
   /// The instruction sent alongside the transcript.
+  ///
+  /// The user's rules come last and are labelled as theirs, so a rule such as
+  /// "use British spelling" refines the tone guidance rather than being read as
+  /// part of the transcript.
   public var composedInstruction: String {
     var parts = [tone.guidance]
     if let vocabularyContext, !vocabularyContext.isEmpty {
       parts.append(vocabularyContext)
+    }
+    let rules = customInstructions?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if !rules.isEmpty {
+      parts.append("The user also asks you to follow these rules: \(rules)")
     }
     return parts.joined(separator: " ")
   }

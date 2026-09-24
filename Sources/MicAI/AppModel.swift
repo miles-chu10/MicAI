@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import MicAICore
@@ -12,6 +13,18 @@ final class AppModel: ObservableObject {
   @Published private(set) var providerStatus: ProviderStatus = .notConfigured
   @Published private(set) var historyEntries: [HistoryEntry] = []
   @Published private(set) var vocabularyEntries: [VocabularyEntry] = []
+  @Published private(set) var snippetEntries: [Snippet] = []
+  /// The text MicAI last put somewhere: inserted, or shown as an answer. What
+  /// "Paste Last Result" pastes again.
+  @Published private(set) var lastResult: String?
+  /// The mode of the operation in flight, for the HUD and the menu bar icon.
+  @Published private(set) var operationMode: MicAIMode?
+  /// True after a quick tap in "Hold or tap" mode: recording continues until
+  /// the next press.
+  @Published private(set) var isHandsFree = false
+  /// Bumped when the Keychain key changes, since the Keychain cannot be
+  /// observed and Settings needs to redraw its status.
+  @Published private(set) var apiKeyRevision = 0
   /// Tone applied to the most recent dictation, shown in the HUD and history.
   @Published private(set) var lastTone: StyleTone?
   /// Set when an Ask AI result was a question rather than content. The answer
@@ -32,7 +45,9 @@ final class AppModel: ObservableObject {
   private let insertionCoordinator: TextInsertionCoordinator
   private let hudController: RecordingHUDController
   private let providerStatusRelay: ProviderStatusRelay
+  private let llmClient: SwitchingLLMClient
   private let vocabularyStore: VocabularyStore
+  private let snippetStore: SnippetStore
   private let historyStore: TranscriptHistoryStore
   private let composer: DictationComposer
   private let translationEngine: TranslationEngine
@@ -41,7 +56,6 @@ final class AppModel: ObservableObject {
   private var operationAttemptID: UUID?
   private var operationStartupMode: MicAIMode?
   private var pendingStopMode: MicAIMode?
-  private var operationMode: MicAIMode?
   private var operationTarget: TargetIdentity?
   private var cancellables: Set<AnyCancellable> = []
 
@@ -58,7 +72,7 @@ final class AppModel: ObservableObject {
   init() {
     let settingsStore = SettingsStore()
     let coordinator = OperationCoordinator()
-    let recognizer = FluidAudioRecognizer()
+    let recognizer = FluidAudioRecognizer(model: settingsStore.settings.speechModel)
     let targetTracker = TargetApplicationTracker()
     let providerStatusRelay = ProviderStatusRelay()
 
@@ -83,12 +97,16 @@ final class AppModel: ObservableObject {
       targetValidator: targetTracker
     )
     self.insertionCoordinator = insertionCoordinator
-    // One client for both paths, so a 401 refresh or a rate-limit status seen
-    // by refinement is the same status AI Commands reports.
-    let llmClient = ChatGPTResponsesClient(
-      credentialLoader: CodexAuthFileLoader(),
-      statusHandler: providerStatusRelay.send
+    // One client for every path, so a 401 refresh or a rate-limit status seen
+    // by refinement is the same status AI Commands reports, and switching the
+    // provider in Settings switches all four modes at once.
+    let llmClient = SwitchingLLMClient(
+      Self.makeLLMClient(
+        for: settingsStore.settings.llmProvider,
+        statusHandler: providerStatusRelay.send
+      )
     )
+    self.llmClient = llmClient
     commandPipeline = CommandPipeline(
       dictationPipeline: pipeline,
       commandEngine: CommandEngine(transformer: llmClient),
@@ -112,12 +130,20 @@ final class AppModel: ObservableObject {
           .appendingPathComponent("MicAI-history.json"),
         limit: settingsStore.settings.historyLimit
       )
+    let snippetStore =
+      (try? SnippetStore.applicationSupport())
+      ?? SnippetStore(
+        file: FileManager.default.temporaryDirectory
+          .appendingPathComponent("MicAI-snippets.json")
+      )
     self.vocabularyStore = vocabularyStore
     self.historyStore = historyStore
+    self.snippetStore = snippetStore
     composer = DictationComposer(
       refiner: RefinementEngine(transformer: llmClient),
       vocabulary: vocabularyStore,
-      history: historyStore
+      history: historyStore,
+      snippets: snippetStore
     )
     // Both take their per-call settings as arguments: they run off the main
     // actor inside CommandPipeline, so the values are read on the main actor at
@@ -140,15 +166,7 @@ final class AppModel: ObservableObject {
         }
         .store(in: &cancellables)
     }
-    Publishers.CombineLatest3($operationPhase, $inputLevel, $errorMessage)
-      .sink { [weak self] phase, level, message in
-        self?.hudController.update(
-          phase: phase,
-          level: level,
-          message: message
-        )
-      }
-      .store(in: &cancellables)
+    bindHUD()
     providerStatusRelay.setHandler { [weak self] status in
       Task { @MainActor [weak self] in
         self?.providerStatus = status
@@ -222,8 +240,173 @@ final class AppModel: ObservableObject {
   }
 
   func applySettings() {
-    hotkeyMonitor.update(settings: settingsStore.settings)
+    let settings = settingsStore.settings
+    hotkeyMonitor.update(settings: settings)
+    let client = Self.makeLLMClient(
+      for: settings.llmProvider,
+      statusHandler: providerStatusRelay.send
+    )
+    let llmClient = self.llmClient
+    Task {
+      await llmClient.use(client)
+    }
+    switchSpeechModelIfNeeded(to: settings.speechModel)
     refreshProviderStatus()
+  }
+
+  /// Loads the newly chosen recognizer. Instant when it is already cached;
+  /// otherwise the status returns to "not prepared" so Settings offers the
+  /// download instead of dictation failing on a model that is not there.
+  private func switchSpeechModelIfNeeded(to choice: SpeechModelChoice) {
+    let recognizer = self.recognizer
+    Task { @MainActor in
+      guard await recognizer.model != choice else {
+        return
+      }
+      await recognizer.select(choice)
+      modelState = .notDownloaded
+      await prepareCachedModelIfAvailable()
+    }
+  }
+
+  func setPrivacyMode(_ enabled: Bool) {
+    var settings = settingsStore.settings
+    settings.privacyMode = enabled
+    if settingsStore.save(settings) {
+      applySettings()
+    }
+  }
+
+  // MARK: - API key
+
+  var hasAPIKey: Bool {
+    _ = apiKeyRevision
+    return KeychainAPIKeyStore.hasKey
+  }
+
+  func saveAPIKey(_ key: String) {
+    KeychainAPIKeyStore.save(key)
+    apiKeyRevision += 1
+  }
+
+  func removeAPIKey() {
+    KeychainAPIKeyStore.delete()
+    apiKeyRevision += 1
+  }
+
+  var providerName: String {
+    switch settingsStore.settings.llmProvider {
+    case .chatGPTSubscription:
+      "ChatGPT"
+    case .openAIAPIKey:
+      "OpenAI"
+    }
+  }
+
+  // MARK: - Last result
+
+  func copyLastResult() {
+    guard let lastResult else {
+      return
+    }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(lastResult, forType: .string)
+  }
+
+  /// Pastes the last result into whatever has focus now. For the dictation that
+  /// went into the wrong window: switch to the right one and paste it again.
+  func pasteLastResult() {
+    guard let text = lastResult, !isOperationActive else {
+      return
+    }
+    accessibilityPermission.refresh()
+    guard accessibilityPermission.isTrusted else {
+      errorMessage = MicAIError.accessibilityDenied.localizedDescription
+      return
+    }
+    let targetTracker = self.targetTracker
+    let insertionCoordinator = self.insertionCoordinator
+    Task { @MainActor in
+      guard let target = await targetTracker.capture() else {
+        return
+      }
+      do {
+        try await insertionCoordinator.apply(.insert(text), to: target, while: { true })
+      } catch {
+        errorMessage = (error as? MicAIError)?.localizedDescription
+      }
+      await targetTracker.release(target)
+    }
+  }
+
+  // MARK: - Usage
+
+  func usage(since start: Date? = nil) -> UsageStats {
+    UsageStats(entries: historyEntries, since: start)
+  }
+
+  // MARK: - HUD
+
+  private func bindHUD() {
+    let hud = hudController.model
+    $operationMode
+      .compactMap { $0 }
+      .sink { hud.mode = $0 }
+      .store(in: &cancellables)
+    $isHandsFree
+      .sink { hud.isHandsFree = $0 }
+      .store(in: &cancellables)
+    $errorMessage
+      .sink { hud.message = $0 }
+      .store(in: &cancellables)
+    $inputLevel
+      .sink { hud.push(level: $0) }
+      .store(in: &cancellables)
+    $operationPhase
+      .removeDuplicates()
+      .sink { [weak self] phase in
+        guard let self else {
+          return
+        }
+        hud.providerName = providerName
+        hud.detail = hudDetail()
+        let previous = hud.phase
+        hud.phase = phase
+        guard settingsStore.settings.soundFeedback else {
+          return
+        }
+        if phase == .recording, previous != .recording {
+          SoundFeedback.started()
+        } else if case .failed = phase {
+          SoundFeedback.failed()
+        }
+      }
+      .store(in: &cancellables)
+  }
+
+  /// The qualifier the HUD shows beside the mode: the tone MicAI will write in
+  /// for dictation, the destination language for Translate.
+  private func hudDetail() -> String? {
+    let settings = settingsStore.settings
+    switch operationMode {
+    case .dictation:
+      guard settings.isRefinementActive else {
+        return nil
+      }
+      let tone = settings.resolver().tone(for: operationTarget)
+      if let name = operationTarget?.applicationName {
+        return "\(tone.displayName), for \(name)"
+      }
+      return tone.displayName
+    case .translate:
+      return "to \(settings.translationTargetLanguage)"
+    case .command:
+      return nil
+    case .ask:
+      return nil
+    case nil:
+      return nil
+    }
   }
 
   func refreshSystemStatus() {
@@ -259,8 +442,15 @@ final class AppModel: ObservableObject {
       return
     }
 
+    if action == .lockRecording {
+      isHandsFree = true
+      return
+    }
+
     Task {
       switch (mode, action) {
+      case (_, .lockRecording):
+        break
       case (.dictation, .startRecording):
         await startDictation()
       case (.dictation, .stopRecording):
@@ -614,6 +804,7 @@ final class AppModel: ObservableObject {
           answer: result.answer,
           usedSelection: result.usedSelection
         )
+        lastResult = result.answer
         complete(transcript: produced.instruction)
         return
       }
@@ -702,6 +893,7 @@ final class AppModel: ObservableObject {
       throw MicAIError.cancelled
     }
     providerStatus = .readyToAttempt
+    lastResult = output
     await recordSelectionHistory(
       mode: mode,
       spoken: spoken,
@@ -846,6 +1038,7 @@ final class AppModel: ObservableObject {
         throw MicAIError.cancelled
       }
       providerStatus = .readyToAttempt
+      lastResult = result.intent.text
       await recordCommandHistory(result: result, target: target)
       complete(transcript: result.instruction)
     } catch {
@@ -880,18 +1073,27 @@ final class AppModel: ObservableObject {
   private func complete(transcript: Transcript, diagnostic: String? = nil) {
     lastTranscript = transcript.text
     errorMessage = diagnostic
+    playFinishedSound()
     operationPhase = .idle
     clearOperation()
   }
 
   private func complete(composed: ComposedDictation, diagnostic: String? = nil) {
     lastTranscript = composed.text
+    lastResult = composed.text
     lastTone = composed.tone
+    playFinishedSound()
     // A refinement failure is worth surfacing, but it must not mask a real
     // insertion diagnostic, which is the more actionable of the two.
     errorMessage = diagnostic ?? composed.refinementFailure?.localizedDescription
     operationPhase = .idle
     clearOperation()
+  }
+
+  private func playFinishedSound() {
+    if settingsStore.settings.soundFeedback {
+      SoundFeedback.finished()
+    }
   }
 
   // MARK: - History and vocabulary
@@ -923,12 +1125,14 @@ final class AppModel: ObservableObject {
   private func loadStoredCollections() async {
     await vocabularyStore.load()
     await historyStore.load()
+    await snippetStore.load()
     await refreshStoredCollections()
   }
 
   private func refreshStoredCollections() async {
     historyEntries = await historyStore.all()
     vocabularyEntries = await vocabularyStore.all()
+    snippetEntries = await snippetStore.all()
   }
 
   /// Saves a user edit from the history list and learns the terms it implies.
@@ -967,6 +1171,20 @@ final class AppModel: ObservableObject {
     }
   }
 
+  func upsertSnippet(trigger: String, text: String) {
+    Task { @MainActor in
+      await snippetStore.upsert(Snippet(trigger: trigger, text: text))
+      await refreshStoredCollections()
+    }
+  }
+
+  func deleteSnippet(id: UUID) {
+    Task { @MainActor in
+      await snippetStore.delete(snippetID: id)
+      await refreshStoredCollections()
+    }
+  }
+
   private func clearOperation(ifAttemptID expectedAttemptID: UUID? = nil) {
     if let expectedAttemptID, operationAttemptID != expectedAttemptID {
       return
@@ -983,6 +1201,7 @@ final class AppModel: ObservableObject {
     pendingStopMode = nil
     operationMode = nil
     operationTarget = nil
+    isHandsFree = false
   }
 
   private func rejectDictationStart(with error: MicAIError) {
@@ -1027,6 +1246,23 @@ final class AppModel: ObservableObject {
       && !settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
     providerStatus = configured ? .readyToAttempt : .notConfigured
+  }
+}
+
+extension AppModel {
+  fileprivate static func makeLLMClient(
+    for provider: LLMProvider,
+    statusHandler: @escaping @Sendable (ProviderStatus) -> Void
+  ) -> any LLMTransforming {
+    switch provider {
+    case .chatGPTSubscription:
+      ChatGPTResponsesClient(
+        credentialLoader: CodexAuthFileLoader(),
+        statusHandler: statusHandler
+      )
+    case .openAIAPIKey:
+      OpenAIAPIKeyClient(apiKey: { KeychainAPIKeyStore.read() })
+    }
   }
 }
 

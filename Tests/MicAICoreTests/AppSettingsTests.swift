@@ -125,6 +125,10 @@ struct AppSettingsTests {
           "styleOverrides",
           "translationTargetLanguage",
           "askAlwaysOpensWindow",
+          "llmProvider",
+          "speechModel",
+          "customInstructions",
+          "soundFeedback",
         ]
     )
     #expect(try JSONDecoder().decode(AppSettings.self, from: data) == settings)
@@ -377,5 +381,49 @@ struct TranslateAndAskSettingsTests {
     var settings = AppSettings.defaults
     settings.llmModel = "gpt-5-codex"
     return settings
+  }
+}
+
+@Suite
+struct FeatureSettingsCompatibilityTests {
+  @Test
+  func settingsSavedBeforeProviderAndSpeechModelExistedGetSafeDefaults() throws {
+    let legacy = """
+      {
+        "dictationHotkey": { "keyCode": 61, "modifiers": [] },
+        "dictationActivationMode": "hold",
+        "llmModel": "gpt-test"
+      }
+      """
+    let settings = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
+
+    #expect(settings.llmProvider == .chatGPTSubscription)
+    #expect(settings.speechModel == .english)
+    #expect(settings.customInstructions.isEmpty)
+    #expect(settings.soundFeedback)
+  }
+
+  @Test
+  func hybridActivationRoundTrips() throws {
+    var settings = AppSettings.defaults
+    settings.dictationActivationMode = .hybrid
+    let data = try JSONEncoder().encode(settings)
+    #expect(
+      try JSONDecoder().decode(AppSettings.self, from: data).dictationActivationMode == .hybrid
+    )
+  }
+
+  @Test
+  func validationTrimsCustomInstructions() throws {
+    var settings = AppSettings.defaults
+    settings.customInstructions = "  Use British spelling.\n"
+    #expect(try settings.validated().customInstructions == "Use British spelling.")
+  }
+
+  @Test
+  func keyCapsListOneLabelPerKey() {
+    #expect(Hotkey.rightOption.keyCaps == ["Right ⌥"])
+    #expect(Hotkey.controlOptionSpace.keyCaps == ["⌃", "⌥", "Space"])
+    #expect(Hotkey.commandShiftSpace.keyCaps == ["⇧", "⌘", "Space"])
   }
 }

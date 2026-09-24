@@ -1,93 +1,92 @@
 import MicAICore
 import SwiftUI
 
-/// What leaves the machine, and what is kept on it.
-struct PrivacySettingsView: View {
+/// Where your words go, and the switch that keeps them all on this Mac.
+struct PrivacySettingsPane: View {
   @ObservedObject var appModel: AppModel
-  @ObservedObject private var store: SettingsStore
-  @State private var draft: AppSettings
-  @State private var isConfirmingClear = false
-
-  init(appModel: AppModel) {
-    self.appModel = appModel
-    _store = ObservedObject(wrappedValue: appModel.settingsStore)
-    _draft = State(initialValue: appModel.settingsStore.settings)
-  }
+  @Binding var draft: AppSettings
+  @State private var confirmingClear = false
 
   var body: some View {
     Form {
-      Section("Privacy mode") {
-        Toggle("Keep everything on this Mac", isOn: $draft.privacyMode)
-        Text(
-          "Speech recognition already runs locally on this Mac and audio is "
-            + "never uploaded. Privacy mode additionally stops transcripts from "
-            + "being sent for AI clean-up, and disables AI Commands. Turning it "
-            + "off restores your previous settings."
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      }
-
-      Section("History") {
-        Toggle("Keep a history of dictations", isOn: $draft.historyEnabled)
-        Text("Stored on this Mac only, in Application Support. Never uploaded.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-
-        Stepper(
-          "Keep the last \(draft.historyLimit) entries",
-          value: $draft.historyLimit,
-          in: 10...2_000,
-          step: 10
-        )
-        .disabled(!draft.historyEnabled)
-
-        LabeledContent("Stored now") {
-          Text("\(appModel.historyEntries.count)")
-            .monospacedDigit()
-        }
-
-        Button("Clear History…", role: .destructive) {
-          isConfirmingClear = true
-        }
-        .disabled(appModel.historyEntries.isEmpty)
-      }
-
-      if let validationMessage = store.validationMessage {
-        Text(validationMessage)
-          .foregroundStyle(.red)
-      }
-
-      HStack {
-        Spacer()
-        Button("Save") {
-          if store.save(draft) {
-            draft = store.settings
-            appModel.applySettings()
-            // Turning history off should not leave the old entries on disk —
-            // the toggle reads as a privacy promise, so honor it literally.
-            if !draft.historyEnabled {
-              appModel.clearHistory()
+      Section {
+        Toggle(isOn: $draft.privacyMode) {
+          Label {
+            VStack(alignment: .leading, spacing: 2) {
+              Text("Privacy mode")
+              Text("Keep everything on this Mac")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
+          } icon: {
+            Image(systemName: "hand.raised.fill")
           }
         }
-        .keyboardShortcut(.defaultAction)
+      } footer: {
+        Text(
+          "Turns off clean-up, Command, Translate and Ask AI. Your settings come back exactly as "
+            + "they were when you turn it off."
+        )
+      }
+
+      Section("Where your words go") {
+        LabeledContent {
+          Text("Microphone, speech recognition, vocabulary, snippets, history, pasting")
+            .multilineTextAlignment(.trailing)
+        } label: {
+          Label("Stays on this Mac", systemImage: "laptopcomputer")
+        }
+        LabeledContent {
+          VStack(alignment: .trailing, spacing: 2) {
+            Text("Clean-up, Command, Translate, Ask AI")
+            Text("The transcript and any selected text. Never audio.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .multilineTextAlignment(.trailing)
+        } label: {
+          Label("Sent to \(appModel.providerName)", systemImage: "cloud")
+        }
+      }
+
+      Section {
+        Toggle("Keep a history of dictations", isOn: $draft.historyEnabled)
+        Picker("Keep up to", selection: $draft.historyLimit) {
+          ForEach(limitsIncludingCurrent, id: \.self) { limit in
+            Text("\(limit) entries").tag(limit)
+          }
+        }
+        .disabled(!draft.historyEnabled)
+        LabeledContent("Saved now", value: "\(appModel.historyEntries.count)")
+        Button("Clear History…", role: .destructive) {
+          confirmingClear = true
+        }
+        .disabled(appModel.historyEntries.isEmpty)
+      } header: {
+        Text("History")
+      } footer: {
+        Text("Stored on this Mac only, in Application Support. Never uploaded.")
       }
     }
     .formStyle(.grouped)
-    .padding()
-    .onAppear { draft = store.settings }
     .confirmationDialog(
-      "Clear all dictation history?",
-      isPresented: $isConfirmingClear,
+      "Clear all history?",
+      isPresented: $confirmingClear,
       titleVisibility: .visible
     ) {
       Button("Clear History", role: .destructive) {
         appModel.clearHistory()
       }
-      Button("Cancel", role: .cancel) {}
     } message: {
-      Text("This cannot be undone. Learned vocabulary is kept.")
+      Text("This can’t be undone. Learned vocabulary and snippets are kept.")
     }
   }
+
+  /// Includes whatever the current limit is, so a value set by an earlier
+  /// build still shows as selected.
+  private var limitsIncludingCurrent: [Int] {
+    Array(Set(Self.limits + [draft.historyLimit])).sorted()
+  }
+
+  private static let limits = [50, 200, 500, 1_000, 2_000]
 }

@@ -10,28 +10,36 @@ public struct ComposedDictation: Sendable, Equatable {
   /// this exists so the HUD can explain why it reads rougher than usual.
   public let refinementFailure: MicAIError?
   public let historyEntryID: UUID?
+  /// Set when the whole utterance was a snippet trigger and `text` is the
+  /// snippet's expansion.
+  public let snippetID: UUID?
 
   public init(
     text: String,
     tone: StyleTone?,
     refined: Bool,
     refinementFailure: MicAIError? = nil,
-    historyEntryID: UUID? = nil
+    historyEntryID: UUID? = nil,
+    snippetID: UUID? = nil
   ) {
     self.text = text
     self.tone = tone
     self.refined = refined
     self.refinementFailure = refinementFailure
     self.historyEntryID = historyEntryID
+    self.snippetID = snippetID
   }
 }
 
-/// The post-transcription stage: vocabulary, tone, refinement, history.
+/// The post-transcription stage: snippets, vocabulary, tone, refinement,
+/// history.
 ///
 /// `DictationPipeline` stops at a clean transcript. Everything that turns that
 /// transcript into the text a user actually wants lives here, in one place, so
 /// the ordering guarantees hold no matter which UI calls it:
 ///
+/// 0. a snippet trigger short-circuits everything: the saved text goes in
+///    verbatim, never through the model,
 /// 1. vocabulary substitution runs first, locally, so proper nouns are right
 ///    even when refinement is off or offline,
 /// 2. refinement runs second and sees the corrected spelling,
@@ -41,17 +49,20 @@ public actor DictationComposer {
   private let refiner: any TranscriptRefining
   private let vocabulary: VocabularyStore
   private let history: TranscriptHistoryStore
+  private let snippets: SnippetStore?
   private let applier: VocabularyApplier
 
   public init(
     refiner: any TranscriptRefining,
     vocabulary: VocabularyStore,
     history: TranscriptHistoryStore,
+    snippets: SnippetStore? = nil,
     applier: VocabularyApplier = VocabularyApplier()
   ) {
     self.refiner = refiner
     self.vocabulary = vocabulary
     self.history = history
+    self.snippets = snippets
     self.applier = applier
   }
 
@@ -62,6 +73,29 @@ public actor DictationComposer {
     settings: AppSettings
   ) async -> ComposedDictation {
     let rawText = transcript.text
+
+    if mode == .dictation, let snippets,
+      let snippet = SnippetMatcher.match(rawText, in: await snippets.all())
+    {
+      await snippets.recordUse(snippetID: snippet.id)
+      let historyEntryID = await recordHistory(
+        mode: mode,
+        rawText: rawText,
+        finalText: snippet.text,
+        target: target,
+        tone: nil,
+        transcript: transcript,
+        refined: false,
+        settings: settings
+      )
+      return ComposedDictation(
+        text: snippet.text,
+        tone: nil,
+        refined: false,
+        historyEntryID: historyEntryID,
+        snippetID: snippet.id
+      )
+    }
 
     let entries = await vocabulary.all()
     let substitution = applier.apply(rawText, entries: entries)
@@ -81,6 +115,7 @@ public actor DictationComposer {
           transcript: text,
           tone: resolvedTone,
           vocabularyContext: applier.promptContext(entries: entries),
+          customInstructions: settings.customInstructions,
           model: settings.llmModel
         )
       )
@@ -90,21 +125,16 @@ public actor DictationComposer {
       failure = outcome.failure
     }
 
-    var historyEntryID: UUID?
-    if settings.historyEnabled {
-      let entry = HistoryEntry(
-        mode: mode,
-        rawTranscript: rawText,
-        finalText: text,
-        applicationName: target?.applicationName,
-        bundleIdentifier: target?.bundleIdentifier,
-        tone: tone,
-        audioDuration: transcript.audioDuration,
-        refined: refined
-      )
-      await history.record(entry)
-      historyEntryID = entry.id
-    }
+    let historyEntryID = await recordHistory(
+      mode: mode,
+      rawText: rawText,
+      finalText: text,
+      target: target,
+      tone: tone,
+      transcript: transcript,
+      refined: refined,
+      settings: settings
+    )
 
     return ComposedDictation(
       text: text,
@@ -113,6 +143,33 @@ public actor DictationComposer {
       refinementFailure: failure,
       historyEntryID: historyEntryID
     )
+  }
+
+  private func recordHistory(
+    mode: MicAIMode,
+    rawText: String,
+    finalText: String,
+    target: TargetIdentity?,
+    tone: StyleTone?,
+    transcript: Transcript,
+    refined: Bool,
+    settings: AppSettings
+  ) async -> UUID? {
+    guard settings.historyEnabled else {
+      return nil
+    }
+    let entry = HistoryEntry(
+      mode: mode,
+      rawTranscript: rawText,
+      finalText: finalText,
+      applicationName: target?.applicationName,
+      bundleIdentifier: target?.bundleIdentifier,
+      tone: tone,
+      audioDuration: transcript.audioDuration,
+      refined: refined
+    )
+    await history.record(entry)
+    return entry.id
   }
 
   /// Applies a correction the user typed in the history list and persists any

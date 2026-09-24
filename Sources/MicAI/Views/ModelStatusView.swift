@@ -1,34 +1,35 @@
 import MicAICore
 import SwiftUI
 
+/// The on-device speech model's state, with the action that moves it forward.
 struct ModelStatusView: View {
   let state: ModelPreparationState
-  let transcript: String?
   let prepare: () -> Void
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      switch state {
-      case .notDownloaded:
-        Label("Speech model not prepared", systemImage: "arrow.down.circle")
-        Button("Prepare Local Model", action: prepare)
-      case .preparing(let fraction, let phase):
-        Text(phase)
-        ProgressView(value: fraction)
-      case .ready:
-        Label("Speech model ready", systemImage: "checkmark.circle.fill")
-          .foregroundStyle(.green)
-      case .failed(let message):
-        Label(message, systemImage: "exclamationmark.triangle.fill")
-          .foregroundStyle(.red)
-        Button("Retry Model Preparation", action: prepare)
+    switch state {
+    case .notDownloaded:
+      HStack {
+        Text("Not downloaded")
+          .foregroundStyle(.secondary)
+        Button("Download", action: prepare)
       }
-
-      if let transcript, !transcript.isEmpty {
-        Divider()
-        Text(transcript)
-          .lineLimit(4)
-          .textSelection(.enabled)
+    case .preparing(let fraction, let phase):
+      HStack {
+        ProgressView(value: fraction)
+          .frame(width: 120)
+        Text(phase)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    case .ready:
+      Label("Ready, on this Mac", systemImage: "checkmark.circle.fill")
+        .foregroundStyle(.green)
+    case .failed(let message):
+      HStack {
+        Label(message, systemImage: "exclamationmark.triangle.fill")
+          .foregroundStyle(.orange)
+        Button("Retry", action: prepare)
       }
     }
   }

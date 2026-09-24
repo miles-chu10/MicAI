@@ -1,89 +1,79 @@
 import MicAICore
 import SwiftUI
 
-/// The learned-corrections list: names, jargon, and spellings MicAI gets wrong
-/// once and then remembers.
-struct VocabularySettingsView: View {
+/// Corrections applied on this Mac before anything reaches the model.
+struct VocabularySettingsPane: View {
   @ObservedObject var appModel: AppModel
   @State private var heard = ""
   @State private var written = ""
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text("Corrections")
-        .font(.headline)
-      Text(
-        "When MicAI mishears a name or term, add it here — or just fix it in "
-          + "History and MicAI will learn it. Corrections are applied on this "
-          + "Mac before anything is sent anywhere."
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-
-      HStack {
-        TextField("Heard as", text: $heard, prompt: Text("paraquet"))
-        Image(systemName: "arrow.right")
-          .foregroundStyle(.secondary)
-        TextField("Written as", text: $written, prompt: Text("Parakeet"))
-        Button("Add", action: add)
-          .disabled(!isAddable)
+    Form {
+      Section {
+        HStack(spacing: 8) {
+          TextField("Heard as", text: $heard, prompt: Text("paraquet"))
+          Image(systemName: "arrow.right")
+            .foregroundStyle(.secondary)
+            .accessibilityHidden(true)
+          TextField("Written as", text: $written, prompt: Text("Parakeet"))
+          Button("Add", action: add)
+            .disabled(!canAdd)
+        }
+      } header: {
+        Text("Add a correction")
+      } footer: {
+        Text("Correcting a line in History also adds its changed names here.")
       }
 
-      if appModel.vocabularyEntries.isEmpty {
-        ContentUnavailableView(
-          "No corrections yet",
-          systemImage: "character.book.closed",
-          description: Text("Add a term above, or correct a line in History.")
-        )
-        .frame(maxHeight: .infinity)
-      } else {
-        Table(sortedEntries) {
-          TableColumn("Heard as", value: \.heard)
-          TableColumn("Written as", value: \.written)
-          TableColumn("Uses") { entry in
+      Section {
+        if appModel.vocabularyEntries.isEmpty {
+          Text("No corrections yet.")
+            .foregroundStyle(.secondary)
+        }
+        ForEach(sortedEntries) { entry in
+          HStack(spacing: 10) {
+            Text(entry.heard)
+              .foregroundStyle(.secondary)
+              .frame(width: 170, alignment: .leading)
+            Text(entry.written)
+              .fontWeight(.medium)
+            Spacer()
             Text("\(entry.hitCount)")
               .monospacedDigit()
-          }
-          .width(50)
-          TableColumn("") { entry in
+              .foregroundStyle(.secondary)
+              .help("Times this correction was applied")
             Button {
               appModel.deleteVocabularyEntry(id: entry.id)
             } label: {
-              Image(systemName: "minus.circle")
+              Image(systemName: "minus.circle.fill")
+                .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
             .accessibilityLabel("Remove \(entry.heard)")
           }
-          .width(30)
         }
+      } header: {
+        Text("Corrections")
+      } footer: {
+        Text(
+          "Applied on this Mac before anything reaches the model, so names come out right even in "
+            + "privacy mode."
+        )
       }
     }
-    .padding()
+    .formStyle(.grouped)
   }
 
-  /// Most-used first: the entries earning their place are the ones worth
-  /// seeing, and stale ones sink to where they are easy to prune.
   private var sortedEntries: [VocabularyEntry] {
-    appModel.vocabularyEntries.sorted {
-      if $0.hitCount != $1.hitCount {
-        return $0.hitCount > $1.hitCount
-      }
-      return $0.heard.localizedCaseInsensitiveCompare($1.heard) == .orderedAscending
-    }
+    appModel.vocabularyEntries.sorted { $0.hitCount > $1.hitCount }
   }
 
-  private var isAddable: Bool {
+  private var canAdd: Bool {
     VocabularyEntry(heard: heard, written: written).isUsable
   }
 
   private func add() {
-    guard isAddable else {
-      return
-    }
-    appModel.upsertVocabularyEntry(
-      heard: heard.trimmingCharacters(in: .whitespacesAndNewlines),
-      written: written.trimmingCharacters(in: .whitespacesAndNewlines)
-    )
+    appModel.upsertVocabularyEntry(heard: heard, written: written)
     heard = ""
     written = ""
   }

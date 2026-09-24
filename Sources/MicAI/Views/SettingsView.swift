@@ -1,31 +1,66 @@
 import MicAICore
 import SwiftUI
 
-struct SettingsView: View {
-  @ObservedObject var appModel: AppModel
+enum SettingsPane: String, CaseIterable, Identifiable {
+  case general
+  case style
+  case vocabulary
+  case snippets
+  case privacy
 
-  var body: some View {
-    TabView {
-      GeneralSettingsView(appModel: appModel)
-        .tabItem { Label("General", systemImage: "gearshape") }
+  var id: Self { self }
 
-      StyleSettingsView(appModel: appModel)
-        .tabItem { Label("Style", systemImage: "wand.and.stars") }
-
-      VocabularySettingsView(appModel: appModel)
-        .tabItem { Label("Vocabulary", systemImage: "character.book.closed") }
-
-      PrivacySettingsView(appModel: appModel)
-        .tabItem { Label("Privacy", systemImage: "hand.raised") }
+  var title: String {
+    switch self {
+    case .general:
+      "General"
+    case .style:
+      "Style"
+    case .vocabulary:
+      "Vocabulary"
+    case .snippets:
+      "Snippets"
+    case .privacy:
+      "Privacy"
     }
-    .frame(width: 560, height: 620)
+  }
+
+  var symbol: String {
+    switch self {
+    case .general:
+      "gearshape"
+    case .style:
+      "textformat"
+    case .vocabulary:
+      "character.book.closed"
+    case .snippets:
+      "text.quote"
+    case .privacy:
+      "hand.raised"
+    }
+  }
+
+  /// Vocabulary and snippets save as you add them; the other panes edit a
+  /// draft that is validated as a whole, because a hotkey collision spans
+  /// fields no single toggle could check.
+  var usesDraft: Bool {
+    switch self {
+    case .general, .style, .privacy:
+      true
+    case .vocabulary, .snippets:
+      false
+    }
   }
 }
 
-struct GeneralSettingsView: View {
+/// Settings, laid out like System Settings: a sidebar of panes, each a grouped
+/// form. One draft is shared across panes so switching panes never loses an
+/// edit, and one Save validates everything together.
+struct SettingsView: View {
   @ObservedObject var appModel: AppModel
   @ObservedObject private var store: SettingsStore
   @State private var draft: AppSettings
+  @State private var pane: SettingsPane? = .general
 
   init(appModel: AppModel) {
     self.appModel = appModel
@@ -34,91 +69,189 @@ struct GeneralSettingsView: View {
   }
 
   var body: some View {
-    Form {
-      Section("Dictation") {
-        Picker(
-          "Hotkey",
-          selection: $draft.dictationHotkey
-        ) {
-          ForEach(Self.dictationHotkeys, id: \.self) { hotkey in
-            Text(hotkey.displayName).tag(hotkey)
+    NavigationSplitView {
+      List(SettingsPane.allCases, selection: $pane) { pane in
+        Label(pane.title, systemImage: pane.symbol)
+          .tag(pane)
+      }
+      .navigationSplitViewColumnWidth(190)
+      .toolbar(removing: .sidebarToggle)
+      .safeAreaInset(edge: .bottom) {
+        SidebarStatus(appModel: appModel)
+      }
+    } detail: {
+      detail
+        .navigationTitle((pane ?? .general).title)
+        .safeAreaInset(edge: .bottom) {
+          if (pane ?? .general).usesDraft {
+            saveBar
           }
         }
+    }
+    .frame(minWidth: 760, minHeight: 560)
+    .onAppear { draft = store.settings }
+  }
 
-        Picker(
-          "Activation",
-          selection: $draft.dictationActivationMode
-        ) {
+  @ViewBuilder
+  private var detail: some View {
+    switch pane ?? .general {
+    case .general:
+      GeneralSettingsPane(appModel: appModel, draft: $draft)
+    case .style:
+      StyleSettingsPane(appModel: appModel, draft: $draft)
+    case .vocabulary:
+      VocabularySettingsPane(appModel: appModel)
+    case .snippets:
+      SnippetsSettingsPane(appModel: appModel)
+    case .privacy:
+      PrivacySettingsPane(appModel: appModel, draft: $draft)
+    }
+  }
+
+  private var saveBar: some View {
+    HStack(spacing: 10) {
+      if let message = store.validationMessage {
+        Label(message, systemImage: "exclamationmark.triangle.fill")
+          .foregroundStyle(.red)
+          .font(.callout)
+      } else if draft != store.settings {
+        Text("Unsaved changes")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+      }
+      Spacer()
+      Button("Revert") {
+        draft = store.settings
+      }
+      .disabled(draft == store.settings)
+      Button("Save") {
+        if store.save(draft) {
+          draft = store.settings
+          appModel.applySettings()
+        }
+      }
+      .keyboardShortcut(.defaultAction)
+      .disabled(draft == store.settings)
+    }
+    .padding(.horizontal, 20)
+    .padding(.vertical, 12)
+    .background(.bar)
+  }
+}
+
+/// "Ready · speech model on this Mac", at the foot of the sidebar.
+private struct SidebarStatus: View {
+  @ObservedObject var appModel: AppModel
+
+  var body: some View {
+    let ready = appModel.readiness.dictation.isReady
+    HStack(spacing: 7) {
+      Circle()
+        .fill(ready ? Color.green : Color.orange)
+        .frame(width: 7, height: 7)
+      Text(ready ? "Ready · speech on this Mac" : "Setup needed")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      Spacer()
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 10)
+  }
+}
+
+// MARK: - General
+
+struct GeneralSettingsPane: View {
+  @ObservedObject var appModel: AppModel
+  @Binding var draft: AppSettings
+  @State private var apiKeyEntry = ""
+
+  var body: some View {
+    Form {
+      Section {
+        ShortcutRow(
+          mode: .dictation,
+          selection: Binding(
+            get: { draft.dictationHotkey },
+            set: { if let value = $0 { draft.dictationHotkey = value } }
+          ),
+          options: Self.dictationHotkeys,
+          allowsOff: false
+        )
+        Picker("Activation", selection: $draft.dictationActivationMode) {
           ForEach(DictationActivationMode.allCases, id: \.self) { mode in
             Text(mode.displayName).tag(mode)
           }
         }
-      }
-
-      Section("AI Commands") {
-        Picker(
-          "Hotkey",
-          selection: $draft.commandHotkey
-        ) {
-          Text("Not configured").tag(nil as Hotkey?)
-          ForEach(Self.commandHotkeys, id: \.self) { hotkey in
-            Text(hotkey.displayName).tag(hotkey as Hotkey?)
-          }
-        }
-        TextField(
-          "ChatGPT model",
-          text: $draft.llmModel,
-          prompt: Text("Enter a supported subscription model")
+        .pickerStyle(.segmented)
+        ShortcutRow(
+          mode: .command,
+          selection: $draft.commandHotkey,
+          options: Self.commandHotkeys,
+          allowsOff: true
         )
-        LabeledContent("Provider", value: appModel.providerStatus.summary)
+        ShortcutRow(
+          mode: .translate,
+          selection: $draft.translateHotkey,
+          options: Self.translateHotkeys,
+          allowsOff: true
+        )
+        ShortcutRow(
+          mode: .ask,
+          selection: $draft.askHotkey,
+          options: Self.askHotkeys,
+          allowsOff: true
+        )
+      } header: {
+        Text("Shortcuts")
+      } footer: {
+        Text(activationHint)
       }
 
-      Section("AI Translate") {
-        Picker(
-          "Hotkey",
-          selection: $draft.translateHotkey
-        ) {
-          Text("Not configured").tag(nil as Hotkey?)
-          ForEach(Self.translateHotkeys, id: \.self) { hotkey in
-            Text(hotkey.displayName).tag(hotkey as Hotkey?)
+      Section("Speech recognition") {
+        Picker("Model", selection: $draft.speechModel) {
+          ForEach(SpeechModelChoice.allCases, id: \.self) { choice in
+            VStack(alignment: .leading, spacing: 2) {
+              Text(choice.displayName)
+              Text(choice.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .tag(choice)
           }
         }
+        .pickerStyle(.radioGroup)
+        LabeledContent("Status") {
+          ModelStatusView(state: appModel.modelState, prepare: appModel.prepareModel)
+        }
+        Toggle("Play sounds when recording starts and finishes", isOn: $draft.soundFeedback)
+      }
+
+      Section {
+        Picker("Provider", selection: $draft.llmProvider) {
+          ForEach(LLMProvider.allCases, id: \.self) { provider in
+            Text(provider.displayName).tag(provider)
+          }
+        }
+        if draft.llmProvider == .openAIAPIKey {
+          apiKeyRow
+        }
+        TextField("Model", text: $draft.llmModel, prompt: Text("Model name"))
         TextField(
           "Translate into",
           text: $draft.translationTargetLanguage,
           prompt: Text("Spanish")
         )
-        Text(
-          "With text selected, the selection is translated in place. With nothing "
-            + "selected, what you say is translated and inserted. Speech is "
-            + "recognized in English on device; the selection can be any language."
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      }
-
-      Section("Ask AI") {
-        Picker(
-          "Hotkey",
-          selection: $draft.askHotkey
-        ) {
-          Text("Not configured").tag(nil as Hotkey?)
-          ForEach(Self.askHotkeys, id: \.self) { hotkey in
-            Text(hotkey.displayName).tag(hotkey as Hotkey?)
-          }
-        }
-        Toggle("Always open answers in a window", isOn: $draft.askAlwaysOpensWindow)
-        Text(
-          "Ask a question and the answer opens in a window. Say something that is "
-            + "not a question and it is typed at your cursor instead. Any selected "
-            + "text is used as context and is never overwritten."
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
+        Toggle("Always open Ask AI answers in a window", isOn: $draft.askAlwaysOpensWindow)
+        LabeledContent("Status", value: appModel.providerStatus.summary)
+      } header: {
+        Text("Language model")
+      } footer: {
+        Text(providerFooter)
       }
 
       Section("Readiness") {
-        SettingsStatusRow(
+        ReadinessRow(
           title: "Microphone",
           ready: appModel.microphonePermission.isGranted,
           readyText: "Allowed",
@@ -130,8 +263,7 @@ struct GeneralSettingsView: View {
             appModel.microphonePermission.openSystemSettings()
           }
         }
-
-        SettingsStatusRow(
+        ReadinessRow(
           title: "Accessibility",
           ready: appModel.accessibilityPermission.isTrusted,
           readyText: "Allowed",
@@ -139,20 +271,6 @@ struct GeneralSettingsView: View {
         ) {
           appModel.requestAccessibilityPermission()
         }
-
-        LabeledContent("Local speech model") {
-          HStack {
-            Text(modelStatus)
-            if appModel.modelState != .ready {
-              Button("Prepare") {
-                appModel.prepareModel()
-              }
-            }
-          }
-        }
-      }
-
-      Section("System") {
         Toggle(
           "Launch MicAI at login",
           isOn: Binding(
@@ -160,95 +278,111 @@ struct GeneralSettingsView: View {
             set: { appModel.launchAtLogin.setEnabled($0) }
           )
         )
-        LabeledContent("Login item", value: appModel.launchAtLogin.status.label)
         if let launchError = appModel.launchAtLogin.errorMessage {
           Text(launchError)
             .foregroundStyle(.red)
         }
-      }
-
-      if let validationMessage = store.validationMessage {
-        Text(validationMessage)
-          .foregroundStyle(.red)
-      }
-
-      HStack {
-        Button("Run Setup Again") {
+        Button("Run Setup Again…") {
           appModel.showOnboarding()
         }
-        Spacer()
-        Button("Save") {
-          if store.save(draft) {
-            draft = store.settings
-            appModel.applySettings()
-          }
-        }
-        .keyboardShortcut(.defaultAction)
       }
     }
     .formStyle(.grouped)
-    .padding()
-    .onAppear {
-      draft = store.settings
-    }
   }
 
-  private var modelStatus: String {
-    switch appModel.modelState {
-    case .notDownloaded:
-      "Not prepared"
-    case .preparing(_, let phase):
-      phase
-    case .ready:
-      "Ready"
-    case .failed:
-      "Preparation failed"
-    }
-  }
-
-  private static let dictationHotkeys: [Hotkey] = [
-    .rightOption,
-    .controlOptionSpace,
-    .commandShiftSpace,
-  ]
-
-  private static let commandHotkeys: [Hotkey] = [
-    .controlOptionSpace,
-    .commandShiftSpace,
-  ]
-
-  private static let translateHotkeys: [Hotkey] = [
-    .controlOptionT,
-    .commandShiftSpace,
-    .controlOptionSpace,
-  ]
-
-  private static let askHotkeys: [Hotkey] = [
-    .controlOptionA,
-    .commandShiftSpace,
-    .controlOptionSpace,
-  ]
-}
-
-private struct SettingsStatusRow: View {
-  let title: String
-  let ready: Bool
-  let readyText: String
-  let blockedText: String
-  let action: () -> Void
-
-  var body: some View {
-    LabeledContent(title) {
+  @ViewBuilder
+  private var apiKeyRow: some View {
+    LabeledContent("API key") {
       HStack {
-        Label(
-          ready ? readyText : blockedText,
-          systemImage: ready ? "checkmark.circle.fill" : "exclamationmark.circle"
-        )
-        .foregroundStyle(ready ? Color.green : Color.secondary)
-        if !ready {
-          Button("Fix…", action: action)
+        if appModel.hasAPIKey {
+          Label("Saved in your Keychain", systemImage: "key.fill")
+            .foregroundStyle(.secondary)
+          Button("Remove") {
+            appModel.removeAPIKey()
+          }
+        } else {
+          SecureField("API key", text: $apiKeyEntry, prompt: Text("sk-…"))
+            .labelsHidden()
+            .frame(maxWidth: 220)
+          Button("Save Key") {
+            appModel.saveAPIKey(apiKeyEntry)
+            apiKeyEntry = ""
+          }
+          .disabled(apiKeyEntry.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
       }
+    }
+  }
+
+  private var activationHint: String {
+    switch draft.dictationActivationMode {
+    case .hold:
+      "Hold the dictation key while you speak. Command, Translate and Ask AI are always "
+        + "hold-to-talk."
+    case .toggle:
+      "Press the dictation key once to start and again to stop."
+    case .hybrid:
+      "Hold the dictation key to talk, or tap it once to keep recording hands-free until you press "
+        + "it again."
+    }
+  }
+
+  private var providerFooter: String {
+    switch draft.llmProvider {
+    case .chatGPTSubscription:
+      "Uses the ChatGPT sign-in Codex stored on this Mac. MicAI reads it and never copies it."
+    case .openAIAPIKey:
+      "Billed to your OpenAI platform account. The key stays in your Keychain."
+    }
+  }
+
+  static let dictationHotkeys: [Hotkey] = [.rightOption, .controlOptionSpace, .commandShiftSpace]
+  static let commandHotkeys: [Hotkey] = [.controlOptionSpace, .commandShiftSpace]
+  static let translateHotkeys: [Hotkey] = [.controlOptionT, .commandShiftSpace, .controlOptionSpace]
+  static let askHotkeys: [Hotkey] = [.controlOptionA, .commandShiftSpace, .controlOptionSpace]
+}
+
+/// A mode's name, what it does, and its shortcut drawn as keycaps that open a
+/// menu of the supported choices.
+private struct ShortcutRow: View {
+  let mode: MicAIMode
+  @Binding var selection: Hotkey?
+  let options: [Hotkey]
+  let allowsOff: Bool
+
+  var body: some View {
+    HStack(spacing: 10) {
+      ModeDot(mode: mode)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(mode.shortName)
+        Text(mode.summary)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      Spacer()
+      Menu {
+        Picker(mode.shortName, selection: $selection) {
+          if allowsOff {
+            Text("Off").tag(Hotkey?.none)
+          }
+          ForEach(options, id: \.self) { hotkey in
+            Text(hotkey.displayName).tag(Hotkey?.some(hotkey))
+          }
+        }
+        .pickerStyle(.inline)
+        .labelsHidden()
+      } label: {
+        if let selection {
+          KeyCaps(selection)
+        } else {
+          Text("Off")
+            .foregroundStyle(.secondary)
+        }
+      }
+      .menuStyle(.button)
+      .buttonStyle(.borderless)
+      .fixedSize()
+      .accessibilityLabel("\(mode.shortName) shortcut")
     }
   }
 }

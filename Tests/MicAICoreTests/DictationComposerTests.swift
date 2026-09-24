@@ -154,6 +154,61 @@ struct DictationComposerTests {
     #expect(await harness.vocabulary.all().first?.hitCount == 1)
   }
 
+  @Test
+  func snippetTriggerInsertsTheSavedTextWithoutCallingTheModel() async throws {
+    let harness = try await Harness()
+    await harness.snippets.upsert(Snippet(trigger: "my signature", text: "Best,\nMiles"))
+    await harness.refiner.setOutput("should not be used")
+
+    let result = await harness.composer.compose(
+      transcript: transcript("My signature."),
+      mode: .dictation,
+      target: harness.slackTarget,
+      settings: harness.settings()
+    )
+
+    #expect(result.text == "Best,\nMiles")
+    #expect(result.snippetID != nil)
+    #expect(!result.refined)
+    #expect(await harness.refiner.callCount == 0)
+    #expect(await harness.snippets.all().first?.useCount == 1)
+    #expect(await harness.history.all().first?.finalText == "Best,\nMiles")
+  }
+
+  @Test
+  func snippetsOnlyExpandForPlainDictation() async throws {
+    let harness = try await Harness()
+    await harness.snippets.upsert(Snippet(trigger: "my signature", text: "Best,\nMiles"))
+
+    let result = await harness.composer.compose(
+      transcript: transcript("my signature"),
+      mode: .command,
+      target: nil,
+      settings: harness.settings()
+    )
+
+    #expect(result.snippetID == nil)
+  }
+
+  @Test
+  func customInstructionsReachTheRefiner() async throws {
+    let harness = try await Harness()
+    await harness.refiner.setOutput("Colour it in.")
+    var settings = harness.settings()
+    settings.customInstructions = "Use British spelling."
+
+    _ = await harness.composer.compose(
+      transcript: transcript("color it in"),
+      mode: .dictation,
+      target: nil,
+      settings: settings
+    )
+
+    let request = await harness.refiner.lastRequest
+    #expect(request?.customInstructions == "Use British spelling.")
+    #expect(request?.composedInstruction.hasSuffix("Use British spelling.") == true)
+  }
+
   private func transcript(_ text: String) -> Transcript {
     Transcript(
       text: text,
@@ -169,6 +224,7 @@ private struct Harness {
   let directory: URL
   let vocabulary: VocabularyStore
   let history: TranscriptHistoryStore
+  let snippets: SnippetStore
   let refiner: ScriptedRefiner
   let composer: DictationComposer
 
@@ -185,11 +241,13 @@ private struct Harness {
 
     vocabulary = VocabularyStore(file: directory.appendingPathComponent("vocabulary.json"))
     history = TranscriptHistoryStore(file: directory.appendingPathComponent("history.json"))
+    snippets = SnippetStore(file: directory.appendingPathComponent("snippets.json"))
     refiner = ScriptedRefiner()
     composer = DictationComposer(
       refiner: refiner,
       vocabulary: vocabulary,
-      history: history
+      history: history,
+      snippets: snippets
     )
 
     await vocabulary.load()
