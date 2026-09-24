@@ -3,6 +3,27 @@ import SwiftUI
 
 struct SettingsView: View {
   @ObservedObject var appModel: AppModel
+
+  var body: some View {
+    TabView {
+      GeneralSettingsView(appModel: appModel)
+        .tabItem { Label("General", systemImage: "gearshape") }
+
+      StyleSettingsView(appModel: appModel)
+        .tabItem { Label("Style", systemImage: "wand.and.stars") }
+
+      VocabularySettingsView(appModel: appModel)
+        .tabItem { Label("Vocabulary", systemImage: "character.book.closed") }
+
+      PrivacySettingsView(appModel: appModel)
+        .tabItem { Label("Privacy", systemImage: "hand.raised") }
+    }
+    .frame(width: 560, height: 620)
+  }
+}
+
+struct GeneralSettingsView: View {
+  @ObservedObject var appModel: AppModel
   @ObservedObject private var store: SettingsStore
   @State private var draft: AppSettings
 
@@ -50,6 +71,50 @@ struct SettingsView: View {
           prompt: Text("Optional — blank uses your Codex default")
         )
         LabeledContent("Provider", value: appModel.providerStatus.summary)
+      }
+
+      Section("AI Translate") {
+        Picker(
+          "Hotkey",
+          selection: $draft.translateHotkey
+        ) {
+          Text("Not configured").tag(nil as Hotkey?)
+          ForEach(Self.translateHotkeys, id: \.self) { hotkey in
+            Text(hotkey.displayName).tag(hotkey as Hotkey?)
+          }
+        }
+        TextField(
+          "Translate into",
+          text: $draft.translationTargetLanguage,
+          prompt: Text("Spanish")
+        )
+        Text(
+          "With text selected, the selection is translated in place. With nothing "
+            + "selected, what you say is translated and inserted. Speech is "
+            + "recognized in English on device; the selection can be any language."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
+      Section("Ask AI") {
+        Picker(
+          "Hotkey",
+          selection: $draft.askHotkey
+        ) {
+          Text("Not configured").tag(nil as Hotkey?)
+          ForEach(Self.askHotkeys, id: \.self) { hotkey in
+            Text(hotkey.displayName).tag(hotkey as Hotkey?)
+          }
+        }
+        Toggle("Always open answers in a window", isOn: $draft.askAlwaysOpensWindow)
+        Text(
+          "Ask a question and the answer opens in a window. Say something that is "
+            + "not a question and it is typed at your cursor instead. Any selected "
+            + "text is used as context and is never overwritten."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
 
       Section("Readiness") {
@@ -123,7 +188,6 @@ struct SettingsView: View {
     }
     .formStyle(.grouped)
     .padding()
-    .frame(width: 540, height: 600)
     .onAppear {
       draft = store.settings
     }
@@ -151,6 +215,18 @@ struct SettingsView: View {
   private static let commandHotkeys: [Hotkey] = [
     .controlOptionSpace,
     .commandShiftSpace,
+  ]
+
+  private static let translateHotkeys: [Hotkey] = [
+    .controlOptionT,
+    .commandShiftSpace,
+    .controlOptionSpace,
+  ]
+
+  private static let askHotkeys: [Hotkey] = [
+    .controlOptionA,
+    .commandShiftSpace,
+    .controlOptionSpace,
   ]
 }
 

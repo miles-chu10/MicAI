@@ -20,6 +20,7 @@ public enum MicAIError: Error, Equatable, Sendable {
   case llmRateLimited
   case llmServerFailure
   case llmIncomplete
+  case translationLanguageMissing
   case targetChanged
   case clipboardChanged
   case clipboardRestoreFailedAfterCancellation
@@ -69,6 +70,8 @@ extension MicAIError: LocalizedError {
       "The language model service is unavailable."
     case .llmIncomplete:
       "The language model returned an incomplete response."
+    case .translationLanguageMissing:
+      "Set a language to translate into in Settings."
     case .targetChanged:
       "The target application changed before insertion."
     case .clipboardChanged:
