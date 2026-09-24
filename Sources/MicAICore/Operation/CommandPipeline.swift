@@ -41,13 +41,15 @@ public actor CommandPipeline {
     mode: MicAIMode = .command,
     target: TargetIdentity,
     levels: @escaping @Sendable (Float) -> Void,
-    operationStarted: @escaping @Sendable (UUID) async -> Void = { _ in }
+    operationStarted: @escaping @Sendable (UUID) async -> Void = { _ in },
+    partials: (@Sendable (String) -> Void)? = nil
   ) async throws -> UUID {
     let operationID = try await dictationPipeline.begin(
       mode: mode,
       target: target,
       levels: levels,
-      operationStarted: operationStarted
+      operationStarted: operationStarted,
+      partials: partials
     )
 
     do {

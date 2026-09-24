@@ -23,22 +23,19 @@ struct PrivacySettingsPane: View {
           }
         }
       } footer: {
-        Text(
-          "Turns off clean-up, Command, Translate and Ask AI. Your settings come back exactly as "
-            + "they were when you turn it off."
-        )
+        Text(privacyFooter)
       }
 
       Section("Where your words go") {
         LabeledContent {
-          Text("Microphone, speech recognition, vocabulary, snippets, history, pasting")
+          Text(onDeviceItems)
             .multilineTextAlignment(.trailing)
         } label: {
           Label("Stays on this Mac", systemImage: "laptopcomputer")
         }
         LabeledContent {
           VStack(alignment: .trailing, spacing: 2) {
-            Text("Clean-up, Command, Translate, Ask AI")
+            Text(networkItems)
             Text("The transcript and any selected text. Never audio.")
               .font(.caption)
               .foregroundStyle(.secondary)
@@ -80,6 +77,28 @@ struct PrivacySettingsPane: View {
     } message: {
       Text("This can’t be undone. Learned vocabulary and snippets are kept.")
     }
+  }
+
+  private var cleansUpOnDevice: Bool {
+    draft.refinementEnabled && draft.cleanupEngine == .onDevice
+  }
+
+  private var onDeviceItems: String {
+    let items = "Microphone, speech recognition, vocabulary, snippets, history, pasting"
+    return cleansUpOnDevice ? items + ", clean-up" : items
+  }
+
+  private var networkItems: String {
+    cleansUpOnDevice ? "Command, Translate, Ask AI" : "Clean-up, Command, Translate, Ask AI"
+  }
+
+  private var privacyFooter: String {
+    if cleansUpOnDevice {
+      return "Turns off Command, Translate and Ask AI. Clean-up keeps working, because it "
+        + "runs on this Mac. Your settings come back as they were when you turn it off."
+    }
+    return "Turns off clean-up, Command, Translate and Ask AI. Your settings come back as they "
+      + "were when you turn it off."
   }
 
   /// Includes whatever the current limit is, so a value set by an earlier

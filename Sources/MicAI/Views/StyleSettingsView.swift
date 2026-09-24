@@ -13,12 +13,15 @@ struct StyleSettingsPane: View {
     Form {
       Section {
         Toggle("Polish dictation with AI", isOn: $draft.refinementEnabled)
-        if draft.privacyMode {
-          Label("Privacy mode is on, so clean-up is paused.", systemImage: "hand.raised.fill")
-            .foregroundStyle(.orange)
-        } else if draft.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-          Label("Choose a model in General to turn clean-up on.", systemImage: "info.circle")
-            .foregroundStyle(.secondary)
+        Picker("Clean up with", selection: $draft.cleanupEngine) {
+          ForEach(CleanupEngine.allCases, id: \.self) { engine in
+            Text(engine.displayName).tag(engine)
+          }
+        }
+        .disabled(!draft.refinementEnabled)
+        if let note = cleanupNote {
+          Label(note.text, systemImage: note.symbol)
+            .foregroundStyle(note.isWarning ? Color.orange : Color.secondary)
         }
       } header: {
         Text("Clean-up")
@@ -127,6 +130,28 @@ struct StyleSettingsPane: View {
       }
     }
     .formStyle(.grouped)
+  }
+
+  /// Why clean-up will not run as configured, if it will not.
+  private var cleanupNote: (text: String, symbol: String, isWarning: Bool)? {
+    guard draft.refinementEnabled else {
+      return nil
+    }
+    switch draft.cleanupEngine {
+    case .onDevice:
+      if let reason = OnDeviceLanguageModel.unavailableReason {
+        return (reason, "exclamationmark.triangle.fill", true)
+      }
+      return ("Your words never leave this Mac, even in privacy mode.", "laptopcomputer", false)
+    case .languageModel:
+      if draft.privacyMode {
+        return ("Privacy mode is on, so clean-up is paused.", "hand.raised.fill", true)
+      }
+      if draft.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return ("Choose a model in General to turn clean-up on.", "info.circle", false)
+      }
+      return nil
+    }
   }
 
   private var trimmedNewBundleID: String {

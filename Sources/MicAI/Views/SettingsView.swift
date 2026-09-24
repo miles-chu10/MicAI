@@ -224,6 +224,7 @@ struct GeneralSettingsPane: View {
         LabeledContent("Status") {
           ModelStatusView(state: appModel.modelState, prepare: appModel.prepareModel)
         }
+        Toggle("Show words while you speak", isOn: $draft.livePreview)
         Toggle("Play sounds when recording starts and finishes", isOn: $draft.soundFeedback)
       }
 

@@ -5,6 +5,10 @@
 # container can only ever guess at whether the code compiles. CI is the only
 # automated thing that can actually answer that.
 #
+# Build, test and package run on macOS 26 so the Apple Intelligence clean-up
+# path (FoundationModels) is actually compiled; an older SDK compiles it out.
+# Format lint stays on macOS 15 so its swift-format version does not move.
+#
 # What CI CANNOT verify, and still needs a human at a Mac: microphone capture,
 # Accessibility-gated text insertion, global hotkey capture, and the on-device
 # Parakeet model download. A runner has no microphone and cannot grant
@@ -29,7 +33,7 @@ concurrency:
 jobs:
   test:
     name: Build and test
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -42,8 +46,8 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .build
-          key: spm-debug-${{ hashFiles('Package.resolved') }}
-          restore-keys: spm-debug-
+          key: spm-debug-macos26-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-debug-macos26-
 
       - name: Build
         run: swift build --build-tests
@@ -53,7 +57,7 @@ jobs:
 
   package:
     name: Package app bundle
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -61,8 +65,8 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .build
-          key: spm-release-${{ hashFiles('Package.resolved') }}
-          restore-keys: spm-release-
+          key: spm-release-macos26-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-release-macos26-
 
       # Acceptance criterion 1 in docs/BRIEF.md: a clean clone must produce
       # dist/MicAI.app with no Xcode involved.
@@ -75,6 +79,19 @@ jobs:
           test -f dist/MicAI.app/Contents/Resources/MicAI.icns
           /usr/bin/plutil -lint dist/MicAI.app/Contents/Info.plist
           /usr/bin/codesign --verify --deep --strict dist/MicAI.app
+
+      # FoundationModels exists only on macOS 26 and later. A strong link would
+      # stop the app launching at all on macOS 14 and 15, so it must be weak.
+      - name: Verify FoundationModels is weak-linked
+        run: |
+          binary=dist/MicAI.app/Contents/MacOS/MicAI
+          if otool -L "$binary" | grep -q FoundationModels; then
+            otool -l "$binary" | grep -B2 FoundationModels | grep -q LC_LOAD_WEAK_DYLIB
+            echo "FoundationModels is weak-linked."
+          else
+            echo "FoundationModels is not linked; the on-device path was compiled out." >&2
+            exit 1
+          fi
 
       # Acceptance criterion 7: build output must stay out of the working tree.
       - name: Assert build artifacts are ignored

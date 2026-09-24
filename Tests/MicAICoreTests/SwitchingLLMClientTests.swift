@@ -36,3 +36,35 @@ private struct FixedTransformer: LLMTransforming {
     output
   }
 }
+
+@Suite
+struct OnDeviceLanguageModelTests {
+  @Test
+  func promptNamesBothFieldsTheWayTheInstructionsDo() {
+    let prompt = OnDeviceLanguageModel.prompt(
+      for: LLMRequest(
+        instruction: "Write casually.",
+        selectedText: "um so hi",
+        model: OnDeviceLanguageModel.modelName,
+        kind: .refinement
+      )
+    )
+
+    #expect(prompt == "instruction:\nWrite casually.\n\nselected_text:\n<<<\num so hi\n>>>")
+  }
+
+  @Test
+  func promptWithoutSelectedTextHasOnlyTheInstruction() {
+    let prompt = OnDeviceLanguageModel.prompt(
+      for: LLMRequest(instruction: "Say hi.", selectedText: nil, model: "m")
+    )
+    #expect(prompt == "instruction:\nSay hi.")
+  }
+
+  @Test
+  func availabilityIsReportedConsistently() {
+    // CI runners cannot run Apple Intelligence, and a local Mac may; either
+    // way the two accessors must agree.
+    #expect(OnDeviceLanguageModel.isAvailable == (OnDeviceLanguageModel.unavailableReason == nil))
+  }
+}

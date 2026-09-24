@@ -10,7 +10,26 @@ import SwiftUI
 struct RecordingHUDView: View {
   @ObservedObject var model: HUDModel
 
+  /// The panel is this size whatever the content, so live text can grow and
+  /// shrink without resizing a window on every word. The panel ignores the
+  /// mouse, so the empty space around the pill blocks nothing.
+  static let panelSize = CGSize(width: 560, height: 170)
+
   var body: some View {
+    VStack(spacing: 8) {
+      if model.phase == .recording, let partial = model.partialText, !partial.isEmpty {
+        LiveText(text: partial)
+          .transition(.opacity)
+      }
+      pill
+    }
+    .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .bottom)
+    .environment(\.colorScheme, .dark)
+    .animation(.snappy(duration: 0.2), value: model.phase)
+    .animation(.easeOut(duration: 0.15), value: model.partialText)
+  }
+
+  private var pill: some View {
     HStack(spacing: 12) {
       glyph
       content
@@ -35,10 +54,8 @@ struct RecordingHUDView: View {
     .overlay {
       Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 0.5)
     }
-    .environment(\.colorScheme, .dark)
     .padding(12)
     .fixedSize()
-    .animation(.snappy(duration: 0.2), value: model.phase)
     .accessibilityElement(children: .combine)
     .accessibilityLabel(accessibilityText)
   }
@@ -108,7 +125,7 @@ struct RecordingHUDView: View {
     case .transcribing:
       "laptopcomputer"
     case .awaitingLLM:
-      "cloud.fill"
+      model.polishesOnDevice && model.mode == .dictation ? "laptopcomputer" : "cloud.fill"
     case .inserting:
       "checkmark"
     case .failed:
@@ -152,10 +169,14 @@ struct RecordingHUDView: View {
   }
 
   private var awaitingDetail: String {
-    if let detail = model.detail, model.mode == .dictation {
-      return "\(detail) · sent to \(model.providerName)"
+    var place = "sent to \(model.providerName)"
+    if model.polishesOnDevice, model.mode == .dictation {
+      place = "on this Mac"
     }
-    return "Sent to \(model.providerName)"
+    if let detail = model.detail, model.mode == .dictation {
+      return "\(detail) · \(place)"
+    }
+    return place.prefix(1).uppercased() + place.dropFirst()
   }
 
   private var failureTitle: String {
@@ -193,6 +214,29 @@ struct RecordingHUDView: View {
   private func elapsed(until date: Date) -> String {
     let seconds = max(0, Int(date.timeIntervalSince(model.recordingStartedAt)))
     return String(format: "%d:%02d", seconds / 60, seconds % 60)
+  }
+}
+
+/// The live transcript above the pill. Newest words win: a long dictation
+/// shows its end, which is what you are checking as you speak.
+private struct LiveText: View {
+  let text: String
+
+  var body: some View {
+    Text(text)
+      .font(.system(size: 13))
+      .lineLimit(2)
+      .truncationMode(.head)
+      .multilineTextAlignment(.center)
+      .padding(.horizontal, 14)
+      .padding(.vertical, 8)
+      .background(.ultraThinMaterial, in: .rect(cornerRadius: 14))
+      .background(Color.black.opacity(0.55), in: .rect(cornerRadius: 14))
+      .overlay {
+        RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.14), lineWidth: 0.5)
+      }
+      .frame(maxWidth: 480)
+      .accessibilityLabel("Heard so far: \(text)")
   }
 }
 

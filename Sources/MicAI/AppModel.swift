@@ -22,6 +22,9 @@ final class AppModel: ObservableObject {
   /// True after a quick tap in "Hold or tap" mode: recording continues until
   /// the next press.
   @Published private(set) var isHandsFree = false
+  /// A rough transcript of what has been said so far, while recording with
+  /// live preview on. Never what gets inserted.
+  @Published private(set) var livePartial: String?
   /// Bumped when the Keychain key changes, since the Keychain cannot be
   /// observed and Settings needs to redraw its status.
   @Published private(set) var apiKeyRevision = 0
@@ -143,7 +146,10 @@ final class AppModel: ObservableObject {
       refiner: RefinementEngine(transformer: llmClient),
       vocabulary: vocabularyStore,
       history: historyStore,
-      snippets: snippetStore
+      snippets: snippetStore,
+      onDeviceRefiner: OnDeviceLanguageModel.makeTransformer().map {
+        RefinementEngine(transformer: $0)
+      }
     )
     // Both take their per-call settings as arguments: they run off the main
     // actor inside CommandPipeline, so the values are read on the main actor at
@@ -362,6 +368,9 @@ final class AppModel: ObservableObject {
     $inputLevel
       .sink { hud.push(level: $0) }
       .store(in: &cancellables)
+    $livePartial
+      .sink { hud.partialText = $0 }
+      .store(in: &cancellables)
     $operationPhase
       .removeDuplicates()
       .sink { [weak self] phase in
@@ -369,6 +378,7 @@ final class AppModel: ObservableObject {
           return
         }
         hud.providerName = providerName
+        hud.polishesOnDevice = settingsStore.settings.refinementRoute == .onDevice
         hud.detail = hudDetail()
         let previous = hud.phase
         hud.phase = phase
@@ -384,13 +394,25 @@ final class AppModel: ObservableObject {
       .store(in: &cancellables)
   }
 
+  /// Delivers live preview text to the HUD, or nil when live preview is off.
+  private func partialsHandler() -> (@Sendable (String) -> Void)? {
+    guard settingsStore.settings.livePreview else {
+      return nil
+    }
+    return { [weak self] text in
+      Task { @MainActor in
+        self?.livePartial = text
+      }
+    }
+  }
+
   /// The qualifier the HUD shows beside the mode: the tone MicAI will write in
   /// for dictation, the destination language for Translate.
   private func hudDetail() -> String? {
     let settings = settingsStore.settings
     switch operationMode {
     case .dictation:
-      guard settings.isRefinementActive else {
+      guard settings.refinementRoute != nil else {
         return nil
       }
       let tone = settings.resolver().tone(for: operationTarget)
@@ -531,7 +553,8 @@ final class AppModel: ObservableObject {
           if !accepted {
             await coordinator.cancel(operationID: operationID)
           }
-        }
+        },
+        partials: partialsHandler()
       )
       guard operationAttemptID == attemptID else {
         return
@@ -569,7 +592,7 @@ final class AppModel: ObservableObject {
       let transcript = try await pipeline.finish(operationID: operationID)
 
       let settings = settingsStore.settings
-      if settings.isRefinementActive,
+      if settings.refinementRoute != nil,
         await coordinator.markAwaitingLLM(operationID: operationID)
       {
         operationPhase = .awaitingLLM
@@ -714,7 +737,8 @@ final class AppModel: ObservableObject {
           if !accepted {
             await coordinator.cancel(operationID: operationID)
           }
-        }
+        },
+        partials: partialsHandler()
       )
       guard operationAttemptID == attemptID else {
         return
@@ -1202,6 +1226,7 @@ final class AppModel: ObservableObject {
     operationMode = nil
     operationTarget = nil
     isHandsFree = false
+    livePartial = nil
   }
 
   private func rejectDictationStart(with error: MicAIError) {

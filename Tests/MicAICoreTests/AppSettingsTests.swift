@@ -129,6 +129,8 @@ struct AppSettingsTests {
           "speechModel",
           "customInstructions",
           "soundFeedback",
+          "cleanupEngine",
+          "livePreview",
         ]
     )
     #expect(try JSONDecoder().decode(AppSettings.self, from: data) == settings)
@@ -401,6 +403,32 @@ struct FeatureSettingsCompatibilityTests {
     #expect(settings.speechModel == .english)
     #expect(settings.customInstructions.isEmpty)
     #expect(settings.soundFeedback)
+    #expect(settings.cleanupEngine == .languageModel)
+    #expect(settings.livePreview)
+  }
+
+  @Test
+  func onDeviceCleanUpRunsInPrivacyModeAndWithoutAModel() {
+    var settings = AppSettings.defaults
+    settings.cleanupEngine = .onDevice
+    settings.privacyMode = true
+    #expect(settings.llmModel.isEmpty)
+    #expect(settings.refinementRoute == .onDevice)
+
+    settings.refinementEnabled = false
+    #expect(settings.refinementRoute == nil)
+  }
+
+  @Test
+  func languageModelCleanUpStillNeedsAModelAndNoPrivacyMode() {
+    var settings = AppSettings.defaults
+    #expect(settings.refinementRoute == nil)
+
+    settings.llmModel = "gpt-test"
+    #expect(settings.refinementRoute == .languageModel)
+
+    settings.privacyMode = true
+    #expect(settings.refinementRoute == nil)
   }
 
   @Test

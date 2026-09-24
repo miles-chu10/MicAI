@@ -35,8 +35,8 @@ is its own, not a copy of any of these.
 | Choice of AI provider | FluidVoice, VoiceInk | **New.** ChatGPT subscription or an OpenAI API key in the Keychain |
 | Sounds on start and finish | Common across the category | **New** |
 | Paste the last result again | Common across the category | **New.** Menu bar › Paste Last Result |
-| Live words while you speak | FluidVoice | Not yet. Parakeet transcribes after you stop |
-| AI clean-up with no network | FluidVoice (Fluid-1) | Not yet. The next candidate is Apple's on-device model on macOS 26 |
+| Live words while you speak | FluidVoice | **New.** A rough transcript above the HUD, refreshed about every 0.8 s |
+| AI clean-up with no network | FluidVoice (Fluid-1) | **New.** Apple Intelligence on macOS 26, which also works in privacy mode |
 | Reads the screen or clipboard | VoiceInk, Superwhisper | No, by choice. MicAI reads the selection only when a mode needs it |
 | Keeps audio recordings | FluidVoice | No, by choice. Audio is never written to disk |
 | Controls the Mac by voice | FluidVoice (Command Mode) | No. Out of scope for a dictation app |
@@ -56,14 +56,32 @@ is its own, not a copy of any of these.
   learn from. Keeping audio would make the history far more sensitive for
   little gain.
 
+## How live words and on-device clean-up work
+
+**Live words.** While you record, MicAI transcribes the newest 20 seconds of
+audio about every 0.8 seconds, using the Parakeet model that's already loaded,
+and shows the result above the HUD. It's a preview only. When you stop, the
+whole recording is transcribed again in one pass, and that's the text that gets
+inserted. The preview pass is always finished before the final one starts,
+because the two share the recognizer. Capping the preview at 20 seconds keeps
+its cost flat however long you talk. FluidAudio also has a streaming model, but
+it would be a second download and is English-only, whereas this approach works
+with either Parakeet model.
+
+**On-device clean-up.** Settings › Style › "Clean up with" can use Apple
+Intelligence instead of your language model. It uses the same instructions,
+tone, vocabulary and rules, and runs through Apple's Foundation Models framework
+on the Mac. Because nothing leaves the Mac, it keeps working in privacy mode. If
+Apple Intelligence is off or this Mac can't run it, your words go in as spoken
+and the HUD says why. MicAI never quietly switches to the network. The framework
+is weak-linked, so MicAI still launches on macOS 14 and 15.
+
 ## Next
 
-1. On-device clean-up with Apple Foundation Models where the Mac supports it,
-   so privacy mode can still polish text.
-2. Live partial transcripts in the HUD, using FluidAudio's streaming
-   recognizer.
-3. Custom modes: a named prompt with its own shortcut, generalising Command,
+1. Custom modes: a named prompt with its own shortcut, generalising Command,
    Translate and Ask AI.
+2. Command, Translate and Ask AI on the on-device model too, so they also work
+   in privacy mode.
 
 ## Sources
 

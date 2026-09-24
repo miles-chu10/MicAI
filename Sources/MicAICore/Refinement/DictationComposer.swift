@@ -50,16 +50,23 @@ public actor DictationComposer {
   private let vocabulary: VocabularyStore
   private let history: TranscriptHistoryStore
   private let snippets: SnippetStore?
+  private let onDeviceRefiner: (any TranscriptRefining)?
   private let applier: VocabularyApplier
 
+  /// `onDeviceRefiner` is nil when this build or this Mac cannot run Apple's
+  /// on-device model. Choosing on-device clean-up then inserts the transcript
+  /// as recognised and says why, rather than quietly sending it to the network
+  /// model the user chose not to use.
   public init(
     refiner: any TranscriptRefining,
     vocabulary: VocabularyStore,
     history: TranscriptHistoryStore,
     snippets: SnippetStore? = nil,
+    onDeviceRefiner: (any TranscriptRefining)? = nil,
     applier: VocabularyApplier = VocabularyApplier()
   ) {
     self.refiner = refiner
+    self.onDeviceRefiner = onDeviceRefiner
     self.vocabulary = vocabulary
     self.history = history
     self.snippets = snippets
@@ -108,21 +115,27 @@ public actor DictationComposer {
     var refined = false
     var failure: MicAIError?
 
-    if settings.isRefinementActive {
-      let resolvedTone = settings.resolver().tone(for: target)
-      let outcome = await refiner.refine(
-        RefinementRequest(
-          transcript: text,
-          tone: resolvedTone,
-          vocabularyContext: applier.promptContext(entries: entries),
-          customInstructions: settings.customInstructions,
-          model: settings.llmModel
+    if let route = settings.refinementRoute {
+      let chosen: (any TranscriptRefining)? =
+        route == .onDevice ? onDeviceRefiner : refiner
+      if let chosen {
+        let resolvedTone = settings.resolver().tone(for: target)
+        let outcome = await chosen.refine(
+          RefinementRequest(
+            transcript: text,
+            tone: resolvedTone,
+            vocabularyContext: applier.promptContext(entries: entries),
+            customInstructions: settings.customInstructions,
+            model: route == .onDevice ? OnDeviceLanguageModel.modelName : settings.llmModel
+          )
         )
-      )
-      text = outcome.text
-      tone = resolvedTone
-      refined = outcome.refined
-      failure = outcome.failure
+        text = outcome.text
+        tone = resolvedTone
+        refined = outcome.refined
+        failure = outcome.failure
+      } else {
+        failure = .onDeviceModelUnavailable
+      }
     }
 
     let historyEntryID = await recordHistory(

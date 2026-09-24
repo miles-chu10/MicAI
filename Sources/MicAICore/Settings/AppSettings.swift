@@ -38,6 +38,31 @@ public enum LLMProvider: String, Codable, CaseIterable, Sendable {
   }
 }
 
+/// Where dictation clean-up runs.
+public enum CleanupEngine: String, Codable, CaseIterable, Sendable {
+  /// The provider chosen for the AI modes: ChatGPT or an OpenAI API key.
+  case languageModel
+  /// Apple's on-device model (Apple Intelligence, macOS 26 or later). The
+  /// transcript never leaves the Mac, so it keeps working in privacy mode.
+  case onDevice
+
+  public var displayName: String {
+    switch self {
+    case .languageModel:
+      "Your language model"
+    case .onDevice:
+      "Apple Intelligence, on this Mac"
+    }
+  }
+}
+
+/// Which refiner a dictation goes through, once settings are taken into
+/// account. Nil means the transcript goes in as recognised.
+public enum RefinementRoute: Sendable, Equatable {
+  case languageModel
+  case onDevice
+}
+
 /// The on-device Parakeet model. Both run locally; they trade language coverage
 /// for English accuracy.
 public enum SpeechModelChoice: String, Codable, CaseIterable, Sendable {
@@ -205,6 +230,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
   public var customInstructions: String
   /// Play the system sounds for start, finish and failure.
   public var soundFeedback: Bool
+  /// Where clean-up runs.
+  public var cleanupEngine: CleanupEngine
+  /// Show a rough transcript above the HUD while recording.
+  public var livePreview: Bool
 
   public init(
     dictationHotkey: Hotkey,
@@ -224,7 +253,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     llmProvider: LLMProvider = .chatGPTSubscription,
     speechModel: SpeechModelChoice = .english,
     customInstructions: String = "",
-    soundFeedback: Bool = true
+    soundFeedback: Bool = true,
+    cleanupEngine: CleanupEngine = .languageModel,
+    livePreview: Bool = true
   ) {
     self.dictationHotkey = dictationHotkey
     self.commandHotkey = commandHotkey
@@ -244,6 +275,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     self.speechModel = speechModel
     self.customInstructions = customInstructions
     self.soundFeedback = soundFeedback
+    self.cleanupEngine = cleanupEngine
+    self.livePreview = livePreview
   }
 
   // Decoded field by field with defaults rather than synthesized, so settings
@@ -288,6 +321,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
       try container.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
     soundFeedback =
       try container.decodeIfPresent(Bool.self, forKey: .soundFeedback) ?? true
+    cleanupEngine =
+      try container.decodeIfPresent(CleanupEngine.self, forKey: .cleanupEngine)
+      ?? .languageModel
+    livePreview =
+      try container.decodeIfPresent(Bool.self, forKey: .livePreview) ?? true
   }
 
   /// Refinement runs only with a model configured and privacy mode off.
@@ -296,6 +334,22 @@ public struct AppSettings: Codable, Equatable, Sendable {
     refinementEnabled
       && !privacyMode
       && !llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
+  /// Which refiner a dictation uses, or nil to insert it as recognised.
+  ///
+  /// On-device clean-up ignores privacy mode and the model name: nothing
+  /// leaves the Mac, and there is no model to choose.
+  public var refinementRoute: RefinementRoute? {
+    guard refinementEnabled else {
+      return nil
+    }
+    switch cleanupEngine {
+    case .onDevice:
+      return .onDevice
+    case .languageModel:
+      return isRefinementActive ? .languageModel : nil
+    }
   }
 
   /// AI Commands need the network, so privacy mode disables them outright.

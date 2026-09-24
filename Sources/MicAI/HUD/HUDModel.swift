@@ -16,6 +16,7 @@ final class HUDModel: ObservableObject {
       if phase == .recording, oldValue != .recording {
         recordingStartedAt = Date()
         levels = Array(repeating: 0, count: Self.levelCount)
+        partialText = nil
       }
     }
   }
@@ -26,6 +27,11 @@ final class HUDModel: ObservableObject {
   /// Whether the current step runs on this Mac or has gone to the model.
   @Published var providerName = "ChatGPT"
   @Published var isHandsFree = false
+  /// What has been heard so far, while recording with live preview on.
+  @Published var partialText: String?
+  /// True when clean-up runs on Apple's on-device model, so the HUD says the
+  /// words stayed on the Mac instead of naming a provider.
+  @Published var polishesOnDevice = false
   @Published private(set) var levels: [Float] = Array(repeating: 0, count: levelCount)
   @Published private(set) var recordingStartedAt = Date()
 

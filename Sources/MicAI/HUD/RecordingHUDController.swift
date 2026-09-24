@@ -39,16 +39,6 @@ final class RecordingHUDController {
     }
 
     let panel = panel ?? makePanel()
-    // Resize to the pill's natural size on every phase change, once SwiftUI
-    // has laid out the new content: a failure message is wider than the
-    // recording waveform.
-    Task { @MainActor [weak self] in
-      guard let self, let panel = self.panel, let hostingView = panel.contentView else {
-        return
-      }
-      panel.setContentSize(hostingView.fittingSize)
-      self.position(panel)
-    }
     position(panel)
     panel.orderFrontRegardless()
 
@@ -64,8 +54,9 @@ final class RecordingHUDController {
   }
 
   private func makePanel() -> NSPanel {
+    let size = RecordingHUDView.panelSize
     let panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 360, height: 76),
+      contentRect: NSRect(x: 0, y: 0, width: size.width, height: size.height),
       styleMask: [.nonactivatingPanel, .borderless],
       backing: .buffered,
       defer: false
@@ -81,10 +72,7 @@ final class RecordingHUDController {
     // transparent padding around it.
     panel.hasShadow = false
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-    let hostingView = NSHostingView(rootView: RecordingHUDView(model: model))
-    hostingView.sizingOptions = [.intrinsicContentSize]
-    panel.contentView = hostingView
-    panel.setContentSize(hostingView.fittingSize)
+    panel.contentView = NSHostingView(rootView: RecordingHUDView(model: model))
     self.panel = panel
     return panel
   }
@@ -99,7 +87,7 @@ final class RecordingHUDController {
     let visible = screen.visibleFrame
     let origin = NSPoint(
       x: visible.midX - panel.frame.width / 2,
-      y: visible.minY + 28
+      y: visible.minY + 16
     )
     panel.setFrameOrigin(origin)
   }

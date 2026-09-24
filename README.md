@@ -30,6 +30,10 @@ Also included:
   hands-free until you press it again.
 - **Your rules.** Standing instructions such as "use British spelling", applied
   to every clean-up.
+- **Live words.** See what MicAI heard above the recording HUD while you
+  speak.
+- **Clean-up on this Mac.** On macOS 26 with Apple Intelligence, clean-up can
+  run on the device, even in privacy mode.
 - **Privacy mode.** One switch that keeps everything on the Mac.
 - **History and stats.** Everything MicAI typed, searchable and correctable,
   plus words dictated and time saved.
@@ -41,7 +45,7 @@ FluidVoice, VoiceInk, Wispr Flow and Superwhisper.
 
 | Stays on your Mac | Sent to the language model |
 | --- | --- |
-| Microphone audio, speech recognition, vocabulary, snippets, history | The transcript for clean-up, plus the selected text for Command, Translate and Ask AI |
+| Microphone audio, speech recognition, vocabulary, snippets, history, and clean-up when set to Apple Intelligence | The transcript for clean-up, plus the selected text for Command, Translate and Ask AI |
 
 Two providers are supported:
 

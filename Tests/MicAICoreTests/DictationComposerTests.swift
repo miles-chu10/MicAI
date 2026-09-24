@@ -209,6 +209,57 @@ struct DictationComposerTests {
     #expect(request?.composedInstruction.hasSuffix("Use British spelling.") == true)
   }
 
+  @Test
+  func onDeviceCleanUpUsesTheOnDeviceRefinerEvenInPrivacyMode() async throws {
+    let harness = try await Harness()
+    await harness.onDeviceRefiner.setOutput("Polished on the Mac.")
+    await harness.refiner.setOutput("should not be used")
+    var settings = harness.settings()
+    settings.cleanupEngine = .onDevice
+    settings.privacyMode = true
+
+    let result = await harness.composer.compose(
+      transcript: transcript("polished on the mac"),
+      mode: .dictation,
+      target: nil,
+      settings: settings
+    )
+
+    #expect(result.text == "Polished on the Mac.")
+    #expect(result.refined)
+    #expect(await harness.refiner.callCount == 0)
+    #expect(await harness.onDeviceRefiner.lastRequest?.model == OnDeviceLanguageModel.modelName)
+  }
+
+  @Test
+  func onDeviceCleanUpWithoutTheModelKeepsTheWordsAndSaysWhy() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("MicAITests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let networkRefiner = ScriptedRefiner()
+    await networkRefiner.setOutput("should not be used")
+    let composer = DictationComposer(
+      refiner: networkRefiner,
+      vocabulary: VocabularyStore(file: directory.appendingPathComponent("v.json")),
+      history: TranscriptHistoryStore(file: directory.appendingPathComponent("h.json"))
+    )
+    var settings = AppSettings.defaults
+    settings.cleanupEngine = .onDevice
+
+    let result = await composer.compose(
+      transcript: transcript("keep my words"),
+      mode: .dictation,
+      target: nil,
+      settings: settings
+    )
+
+    #expect(result.text == "keep my words")
+    #expect(!result.refined)
+    #expect(result.refinementFailure == .onDeviceModelUnavailable)
+    // Choosing on-device must never quietly fall back to the network.
+    #expect(await networkRefiner.callCount == 0)
+  }
+
   private func transcript(_ text: String) -> Transcript {
     Transcript(
       text: text,
@@ -226,6 +277,7 @@ private struct Harness {
   let history: TranscriptHistoryStore
   let snippets: SnippetStore
   let refiner: ScriptedRefiner
+  let onDeviceRefiner: ScriptedRefiner
   let composer: DictationComposer
 
   let slackTarget = TargetIdentity(
@@ -243,11 +295,13 @@ private struct Harness {
     history = TranscriptHistoryStore(file: directory.appendingPathComponent("history.json"))
     snippets = SnippetStore(file: directory.appendingPathComponent("snippets.json"))
     refiner = ScriptedRefiner()
+    onDeviceRefiner = ScriptedRefiner()
     composer = DictationComposer(
       refiner: refiner,
       vocabulary: vocabulary,
       history: history,
-      snippets: snippets
+      snippets: snippets,
+      onDeviceRefiner: onDeviceRefiner
     )
 
     await vocabulary.load()

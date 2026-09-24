@@ -19,6 +19,7 @@ public enum MicAIError: Error, Equatable, Sendable {
   case llmRateLimited
   case llmServerFailure
   case llmIncomplete
+  case onDeviceModelUnavailable
   case translationLanguageMissing
   case targetChanged
   case clipboardChanged
@@ -67,6 +68,8 @@ extension MicAIError: LocalizedError {
       "The language model service is unavailable."
     case .llmIncomplete:
       "The language model returned an incomplete response."
+    case .onDeviceModelUnavailable:
+      "Apple Intelligence isn’t available on this Mac, so your words went in as spoken."
     case .translationLanguageMissing:
       "Set a language to translate into in Settings."
     case .targetChanged:
