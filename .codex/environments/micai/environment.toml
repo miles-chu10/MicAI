@@ -1,5 +1,5 @@
 version = 1
-name = "MicAI SwiftPM"
+name = "MicAI"
 
 [setup]
 script = '''

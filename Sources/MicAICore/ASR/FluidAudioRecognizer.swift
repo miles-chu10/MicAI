@@ -59,6 +59,16 @@ public actor FluidAudioRecognizer: SpeechRecognizing {
         guard await manager.isAvailable else {
           throw MicAIError.asrNotInitialized
         }
+        // The first Core ML inference pays for model specialization and
+        // Neural Engine load. Spend it here on a second of silence rather
+        // than on the user's first dictation; the result is discarded.
+        await recognizer.publish(.preparing(fraction: 1, phase: "Warming up"))
+        var warmUpState = try TdtDecoderState()
+        _ = try? await manager.transcribe(
+          [Float](repeating: 0, count: 16_000),
+          decoderState: &warmUpState,
+          language: nil
+        )
         return manager
       }
       preparationTask = newTask
