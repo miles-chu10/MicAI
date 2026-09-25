@@ -7,11 +7,11 @@ extension OperationPhase {
     case .idle:
       "Ready"
     case .recording:
-      "Recording"
+      "Listening"
     case .transcribing:
       "Transcribing"
     case .awaitingLLM:
-      "Waiting for ChatGPT"
+      "Polishing"
     case .inserting:
       "Inserting"
     case .failed:
@@ -24,11 +24,11 @@ extension OperationPhase {
     case .idle:
       "checkmark.circle.fill"
     case .recording:
-      "waveform.circle.fill"
+      "waveform"
     case .transcribing:
-      "text.bubble.fill"
+      "laptopcomputer"
     case .awaitingLLM:
-      "sparkles"
+      "cloud.fill"
     case .inserting:
       "arrow.down.doc.fill"
     case .failed:
@@ -41,11 +41,11 @@ extension OperationPhase {
     case .idle:
       .green
     case .recording:
-      .red
+      .primary
     case .transcribing, .awaitingLLM, .inserting:
       .accentColor
     case .failed:
-      .orange
+      .red
     }
   }
 }
@@ -58,7 +58,7 @@ struct StatusPill: View {
       .font(.callout.weight(.medium))
       .foregroundStyle(phase.tint)
       .padding(.horizontal, 10)
-      .padding(.vertical, 6)
+      .padding(.vertical, 5)
       .background(phase.tint.opacity(0.12), in: .capsule)
       .accessibilityLabel("MicAI status: \(phase.displayName)")
   }

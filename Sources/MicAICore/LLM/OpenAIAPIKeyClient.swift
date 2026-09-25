@@ -3,21 +3,35 @@ import Foundation
 public actor OpenAIAPIKeyClient: LLMTransforming {
   public static let endpoint = URL(string: "https://api.openai.com/v1/responses")!
 
-  private let apiKey: String?
+  private let apiKeyProvider: @Sendable () -> String?
   private let transport: any ResponsesHTTPTransport
 
+  /// Reads the key from `OPENAI_API_KEY`. Useful from a terminal; an app opened
+  /// from Finder does not inherit the shell's environment, so the app itself
+  /// uses `init(apiKey:transport:)` with the Keychain.
   public init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
     transport: any ResponsesHTTPTransport = URLSessionResponsesTransport()
   ) {
-    let value = environment["OPENAI_API_KEY"]?
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    apiKey = value?.isEmpty == false ? value : nil
+    let value = environment["OPENAI_API_KEY"]
+    self.init(apiKey: { value }, transport: transport)
+  }
+
+  /// `apiKey` is asked on every request rather than once, so a key saved or
+  /// removed in Settings takes effect on the next dictation without a relaunch.
+  public init(
+    apiKey: @escaping @Sendable () -> String?,
+    transport: any ResponsesHTTPTransport = URLSessionResponsesTransport()
+  ) {
+    apiKeyProvider = apiKey
     self.transport = transport
   }
 
   public func transform(_ request: LLMRequest) async throws -> String {
-    guard let apiKey else {
+    guard
+      let apiKey = apiKeyProvider()?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !apiKey.isEmpty
+    else {
       throw MicAIError.credentialMissing
     }
 
