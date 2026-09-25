@@ -41,7 +41,7 @@ extension OperationPhase {
     case .idle:
       .green
     case .recording:
-      .red
+      .primary
     case .transcribing, .awaitingLLM, .inserting:
       .accentColor
     case .failed:
