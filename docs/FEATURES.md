@@ -31,6 +31,7 @@ is its own, not a copy of any of these.
 | Hands-free recording | Wispr Flow (double-tap) | **New.** "Hold or tap": tap once to keep recording |
 | Many spoken languages | Voiskey (100+), FluidVoice (up to 99) | **New, partly.** 25 European languages with the multilingual model |
 | Your own standing instructions | Superwhisper (custom modes) | **New.** "Your rules" in Settings › Style |
+| Custom modes with their own shortcut | Superwhisper, VoiceInk (Smart Modes), Voiskey (prompt builder) | **New.** Name, instructions, shortcut, and whether the result is typed or shown in a window |
 | Usage stats | FluidVoice | **New.** Words, time saved and speaking rate, from history |
 | Choice of AI provider | FluidVoice, VoiceInk | **New.** ChatGPT subscription or an OpenAI API key in the Keychain |
 | Sounds on start and finish | Common across the category | **New** |
@@ -76,12 +77,28 @@ Apple Intelligence is off or this Mac can't run it, your words go in as spoken
 and the HUD says why. MicAI never quietly switches to the network. The framework
 is weak-linked, so MicAI still launches on macOS 14 and 15.
 
+## Custom modes
+
+A custom mode is Command with standing instructions: a name, what the model
+should do, its own shortcut, and where the result goes (typed at the cursor,
+replacing any selection, or shown in the answer window). Settings › Custom Modes
+has three templates to start from: an email reply, bullet points, and a prompt
+for a coding agent. The last is the idea behind Voiskey's prompt builder.
+
+A custom mode runs through the same pipeline as Command, with the same
+safeguards. The selection is always treated as data, a shortcut must differ
+from every other mode, and the mode is captured when you press the key, so
+editing Settings mid-dictation can't change what a running mode does. History
+records each mode's name. Shortcuts are recorded by pressing them, and must
+include Control, Option or Command, because MicAI listens to keys without
+consuming them.
+
 ## Next
 
-1. Custom modes: a named prompt with its own shortcut, generalising Command,
-   Translate and Ask AI.
-2. Command, Translate and Ask AI on the on-device model too, so they also work
-   in privacy mode.
+1. Command, Translate, Ask AI and custom modes on the on-device model too, so
+   they also work in privacy mode.
+2. Automatic mode per app, like VoiceInk's Power Mode: pick a custom mode by
+   the app you're in instead of by shortcut.
 
 ## Sources
 

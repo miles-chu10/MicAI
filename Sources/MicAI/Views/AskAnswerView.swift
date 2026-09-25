@@ -8,6 +8,8 @@ struct AskAnswer: Identifiable, Equatable {
   let question: String
   let answer: String
   let usedSelection: Bool
+  /// Set when a custom mode produced this rather than Ask AI.
+  var modeName: String?
 }
 
 /// Shows an answer for reading rather than pasting it into whatever had focus.
@@ -37,7 +39,7 @@ struct AskAnswerView: View {
       }
     }
     .frame(minWidth: 480, minHeight: 360)
-    .navigationTitle("Ask AI")
+    .navigationTitle(appModel.pendingAnswer?.modeName ?? "Ask AI")
   }
 
   @ViewBuilder
@@ -46,7 +48,7 @@ struct AskAnswerView: View {
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
           VStack(alignment: .leading, spacing: 4) {
-            Text("You asked")
+            Text(answer.modeName.map { "\($0) · you said" } ?? "You asked")
               .font(.caption)
               .foregroundStyle(.secondary)
             Text(answer.question)

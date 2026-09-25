@@ -21,6 +21,8 @@ extension MicAIMode {
       .blue
     case .ask:
       .purple
+    case .custom:
+      .pink
     }
   }
 
@@ -30,7 +32,7 @@ extension MicAIMode {
     switch self {
     case .dictation:
       Color(red: 0.95, green: 0.94, blue: 0.90)
-    case .command, .translate, .ask:
+    case .command, .translate, .ask, .custom:
       tint
     }
   }
@@ -45,6 +47,8 @@ extension MicAIMode {
       "character.bubble"
     case .ask:
       "questionmark.bubble"
+    case .custom:
+      "sparkles"
     }
   }
 
@@ -58,6 +62,8 @@ extension MicAIMode {
       "Translate"
     case .ask:
       "Ask AI"
+    case .custom:
+      "Custom"
     }
   }
 
@@ -71,6 +77,8 @@ extension MicAIMode {
       "Translate a selection, or what you say."
     case .ask:
       "Questions open a window. Anything else is typed."
+    case .custom:
+      "Your own instructions, on their own shortcut."
     }
   }
 }

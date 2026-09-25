@@ -6,6 +6,9 @@ public struct HistoryEntry: Codable, Equatable, Sendable, Identifiable {
   public let id: UUID
   public let createdAt: Date
   public let mode: MicAIMode
+  /// The custom mode's name when `mode` is `.custom`, so History can say which
+  /// one ran even after the mode is renamed or deleted.
+  public let modeName: String?
   /// What the recognizer produced, after deterministic cleanup but before
   /// vocabulary substitution and refinement. Kept so a correction can be
   /// diffed against what was actually heard.
@@ -23,6 +26,7 @@ public struct HistoryEntry: Codable, Equatable, Sendable, Identifiable {
     id: UUID = UUID(),
     createdAt: Date = Date(),
     mode: MicAIMode,
+    modeName: String? = nil,
     rawTranscript: String,
     finalText: String,
     applicationName: String? = nil,
@@ -34,6 +38,7 @@ public struct HistoryEntry: Codable, Equatable, Sendable, Identifiable {
     self.id = id
     self.createdAt = createdAt
     self.mode = mode
+    self.modeName = modeName
     self.rawTranscript = rawTranscript
     self.finalText = finalText
     self.applicationName = applicationName

@@ -3,6 +3,7 @@ import SwiftUI
 
 enum SettingsPane: String, CaseIterable, Identifiable {
   case general
+  case customModes
   case style
   case vocabulary
   case snippets
@@ -14,6 +15,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     switch self {
     case .general:
       "General"
+    case .customModes:
+      "Custom Modes"
     case .style:
       "Style"
     case .vocabulary:
@@ -29,6 +32,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     switch self {
     case .general:
       "gearshape"
+    case .customModes:
+      "sparkles"
     case .style:
       "textformat"
     case .vocabulary:
@@ -45,7 +50,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   /// fields no single toggle could check.
   var usesDraft: Bool {
     switch self {
-    case .general, .style, .privacy:
+    case .general, .customModes, .style, .privacy:
       true
     case .vocabulary, .snippets:
       false
@@ -97,6 +102,8 @@ struct SettingsView: View {
     switch pane ?? .general {
     case .general:
       GeneralSettingsPane(appModel: appModel, draft: $draft)
+    case .customModes:
+      CustomModesSettingsPane(appModel: appModel, draft: $draft)
     case .style:
       StyleSettingsPane(appModel: appModel, draft: $draft)
     case .vocabulary:

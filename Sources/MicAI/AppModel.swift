@@ -55,6 +55,13 @@ final class AppModel: ObservableObject {
   private let composer: DictationComposer
   private let translationEngine: TranslationEngine
   private let askEngine: AskEngine
+  private let customModeEngine: CustomModeEngine
+  /// Set when a custom mode's shortcut is pressed, and read when its
+  /// operation starts.
+  private var pendingCustomModeID: UUID?
+  /// The custom mode the running operation belongs to, captured when it
+  /// starts, so editing Settings mid-dictation cannot change what it does.
+  private var operationCustomMode: CustomMode?
   private var operationID: UUID?
   private var operationAttemptID: UUID?
   private var operationStartupMode: MicAIMode?
@@ -64,8 +71,8 @@ final class AppModel: ObservableObject {
 
   private lazy var hotkeyMonitor = GlobalHotkeyMonitor(
     settings: settingsStore.settings,
-    actionHandler: { [weak self] mode, action in
-      self?.handleHotkey(mode: mode, action: action)
+    actionHandler: { [weak self] binding, action in
+      self?.handleHotkey(binding: binding, action: action)
     },
     cancelHandler: { [weak self] in
       self?.cancelCurrentOperation()
@@ -156,6 +163,7 @@ final class AppModel: ObservableObject {
     // the call site and passed down.
     translationEngine = TranslationEngine(transformer: llmClient)
     askEngine = AskEngine(transformer: llmClient)
+    customModeEngine = CustomModeEngine(transformer: llmClient)
     isOnboardingPresented = !settingsStore.hasSeenOnboarding
     let observedPublishers = [
       settingsStore.objectWillChange.eraseToAnyPublisher(),
@@ -422,6 +430,8 @@ final class AppModel: ObservableObject {
       return tone.displayName
     case .translate:
       return "to \(settings.translationTargetLanguage)"
+    case .custom:
+      return operationCustomMode?.name
     case .command:
       return nil
     case .ask:
@@ -458,6 +468,18 @@ final class AppModel: ObservableObject {
     isOnboardingPresented = false
   }
 
+  private func handleHotkey(binding: HotkeyBindingID, action: HotkeyAction) {
+    switch binding {
+    case .mode(let mode):
+      handleHotkey(mode: mode, action: action)
+    case .custom(let id):
+      if action == .startRecording {
+        pendingCustomModeID = id
+      }
+      handleHotkey(mode: .custom, action: action)
+    }
+  }
+
   private func handleHotkey(mode: MicAIMode, action: HotkeyAction) {
     if action == .stopRecording, operationStartupMode == mode {
       pendingStopMode = mode
@@ -480,7 +502,7 @@ final class AppModel: ObservableObject {
       case (.dictation, .cancelRecording):
         await cancelDictation()
       case (.command, .startRecording), (.translate, .startRecording),
-        (.ask, .startRecording):
+        (.ask, .startRecording), (.custom, .startRecording):
         await startSelectionMode(mode)
       case (.command, .stopRecording):
         await finishCommand()
@@ -488,8 +510,10 @@ final class AppModel: ObservableObject {
         await finishTranslate()
       case (.ask, .stopRecording):
         await finishAsk()
+      case (.custom, .stopRecording):
+        await finishCustom()
       case (.command, .cancelRecording), (.translate, .cancelRecording),
-        (.ask, .cancelRecording):
+        (.ask, .cancelRecording), (.custom, .cancelRecording):
         await cancelSelectionMode(mode)
       }
     }
@@ -681,6 +705,12 @@ final class AppModel: ObservableObject {
     let attemptID = UUID()
     operationAttemptID = attemptID
     operationStartupMode = mode
+    if mode == .custom {
+      operationCustomMode = pendingCustomModeID.flatMap {
+        settingsStore.settings.customMode(id: $0)
+      }
+      pendingCustomModeID = nil
+    }
     guard isActive(mode) else {
       rejectStart(mode: mode, with: startBlocker(for: mode))
       clearOperation(ifAttemptID: attemptID)
@@ -846,6 +876,74 @@ final class AppModel: ObservableObject {
     }
   }
 
+  /// Runs the custom mode captured at start: insert it, or show it in the
+  /// answer window without touching the document.
+  private func finishCustom() async {
+    guard let operationID, let target = operationTarget, let mode = operationCustomMode else {
+      return
+    }
+
+    operationPhase = .transcribing
+    inputLevel = 0
+    do {
+      let appModel = self
+      let engine = customModeEngine
+      let model = settingsStore.settings.llmModel
+      let produced = try await commandPipeline.finish(
+        operationID: operationID,
+        awaitingLLM: {
+          await MainActor.run { appModel.operationPhase = .awaitingLLM }
+        },
+        produce: { spokenText, selectedText in
+          try await engine.run(
+            mode,
+            spokenText: spokenText,
+            selectedText: selectedText,
+            model: model
+          )
+        }
+      )
+      let result = produced.value
+
+      guard result.output == .window else {
+        try await insert(
+          result.insertionIntent,
+          operationID: operationID,
+          target: target,
+          mode: .custom,
+          spoken: produced.instruction,
+          output: result.text
+        )
+        return
+      }
+      guard await coordinator.markInserting(operationID: operationID),
+        await coordinator.complete(operationID: operationID)
+      else {
+        throw MicAIError.cancelled
+      }
+      await recordSelectionHistory(
+        mode: .custom,
+        spoken: produced.instruction,
+        output: result.text,
+        target: target
+      )
+      var usedSelection = false
+      if case .replaceSelection = result.insertionIntent {
+        usedSelection = true
+      }
+      pendingAnswer = AskAnswer(
+        question: produced.instruction.text,
+        answer: result.text,
+        usedSelection: usedSelection,
+        modeName: mode.name
+      )
+      lastResult = result.text
+      complete(transcript: produced.instruction)
+    } catch {
+      await failSelectionMode(operationID: operationID, error: error)
+    }
+  }
+
   /// Shared tail for the modes that end in an insertion: transcribe, transform,
   /// insert, record history.
   private func runSelectionInsertion(
@@ -953,6 +1051,7 @@ final class AppModel: ObservableObject {
     await historyStore.record(
       HistoryEntry(
         mode: mode,
+        modeName: mode == .custom ? operationCustomMode?.name : nil,
         rawTranscript: spoken.text,
         finalText: output,
         applicationName: target.applicationName,
@@ -972,6 +1071,8 @@ final class AppModel: ObservableObject {
       await finishTranslate()
     case .ask:
       await finishAsk()
+    case .custom:
+      await finishCustom()
     case .dictation:
       await finishDictation()
     }
@@ -987,6 +1088,8 @@ final class AppModel: ObservableObject {
       settingsStore.settings.isTranslateActive
     case .ask:
       settingsStore.settings.isAskActive
+    case .custom:
+      settingsStore.settings.areCustomModesActive && operationCustomMode != nil
     }
   }
 
@@ -1227,6 +1330,7 @@ final class AppModel: ObservableObject {
     operationTarget = nil
     isHandsFree = false
     livePartial = nil
+    operationCustomMode = nil
   }
 
   private func rejectDictationStart(with error: MicAIError) {
@@ -1248,7 +1352,7 @@ final class AppModel: ObservableObject {
     switch operationMode {
     case .dictation:
       await cancelDictation()
-    case .command, .translate, .ask:
+    case .command, .translate, .ask, .custom:
       await cancelSelectionMode(operationMode ?? .command)
     case nil:
       return

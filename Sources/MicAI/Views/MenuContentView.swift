@@ -27,9 +27,14 @@ struct MenuContentView: View {
     Divider()
 
     Section("Shortcuts") {
-      ForEach(MicAIMode.allCases, id: \.self) { mode in
+      ForEach(MicAIMode.builtIn, id: \.self) { mode in
         if let hotkey = appModel.settingsStore.settings.hotkey(for: mode) {
           Text("\(mode.shortName)    \(hotkey.displayName)")
+        }
+      }
+      ForEach(appModel.settingsStore.settings.customModes) { customMode in
+        if let hotkey = customMode.hotkey {
+          Text("\(customMode.name)    \(hotkey.displayName)")
         }
       }
     }

@@ -137,7 +137,7 @@ struct OnboardingView: View {
       )
       .foregroundStyle(.secondary)
       VStack(alignment: .leading, spacing: 12) {
-        ForEach(MicAIMode.allCases, id: \.self) { mode in
+        ForEach(MicAIMode.builtIn, id: \.self) { mode in
           HStack(spacing: 10) {
             Image(systemName: mode.symbol)
               .foregroundStyle(mode.tint)

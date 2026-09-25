@@ -165,6 +165,8 @@ struct RecordingHUDView: View {
       "Translating"
     case .ask:
       "Thinking"
+    case .custom:
+      "Working"
     }
   }
 

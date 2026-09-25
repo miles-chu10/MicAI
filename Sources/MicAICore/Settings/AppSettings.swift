@@ -116,14 +116,91 @@ public struct Hotkey: Codable, Hashable, Sendable {
     modifiers: [.control, .option]
   )
 
-  /// Virtual key codes to labels, for the ones offered in Settings. Values are
-  /// Carbon `kVK_ANSI_*` constants; anything unlisted falls back to its number
-  /// rather than guessing at a character that depends on keyboard layout.
+  /// Virtual key codes to labels. Values are Carbon `kVK_*` constants, labelled
+  /// as on a US ANSI keyboard, which is how macOS itself names shortcut keys in
+  /// most places. Anything unlisted falls back to its number.
   static let keyNames: [UInt16: String] = [
     0: "A",
+    1: "S",
+    2: "D",
+    3: "F",
+    4: "H",
+    5: "G",
+    6: "Z",
+    7: "X",
+    8: "C",
+    9: "V",
+    11: "B",
+    12: "Q",
+    13: "W",
+    14: "E",
+    15: "R",
+    16: "Y",
     17: "T",
+    18: "1",
+    19: "2",
+    20: "3",
+    21: "4",
+    22: "6",
+    23: "5",
+    24: "=",
+    25: "9",
+    26: "7",
+    27: "-",
+    28: "8",
+    29: "0",
+    30: "]",
+    31: "O",
+    32: "U",
+    33: "[",
+    34: "I",
+    35: "P",
+    36: "Return",
+    37: "L",
+    38: "J",
+    39: "'",
+    40: "K",
+    41: ";",
+    42: "\\",
+    43: ",",
+    44: "/",
+    45: "N",
+    46: "M",
+    47: ".",
+    48: "Tab",
     49: "Space",
+    50: "`",
+    96: "F5",
+    97: "F6",
+    98: "F7",
+    99: "F3",
+    100: "F8",
+    101: "F9",
+    103: "F11",
+    109: "F10",
+    111: "F12",
+    118: "F4",
+    120: "F2",
+    122: "F1",
   ]
+
+  /// Keys a recorded shortcut may not use: Escape cancels every operation, and
+  /// Delete and Forward Delete edit text.
+  public static let reservedKeyCodes: Set<UInt16> = [51, 53, 117]
+
+  /// The shortcut a key press would record, or nil when it cannot be one.
+  ///
+  /// It needs Control, Option or Command. Shift alone is not enough: MicAI
+  /// listens to keys without consuming them, so Shift-A would fire every time
+  /// you typed a capital A.
+  public static func recordable(keyCode: UInt16, modifiers: Set<HotkeyModifier>) -> Hotkey? {
+    guard !reservedKeyCodes.contains(keyCode),
+      !modifiers.isDisjoint(with: [.control, .option, .command])
+    else {
+      return nil
+    }
+    return Hotkey(keyCode: keyCode, modifiers: modifiers)
+  }
 
   public var keyCode: UInt16
   public var modifiers: Set<HotkeyModifier>
@@ -163,6 +240,7 @@ public enum AppSettingsValidationError: Error, Equatable, Sendable {
   case duplicateHotkeys
   case unusableHotkey
   case emptyTargetLanguage
+  case incompleteCustomMode
 }
 
 extension AppSettingsValidationError: LocalizedError {
@@ -171,11 +249,13 @@ extension AppSettingsValidationError: LocalizedError {
     case .emptyModel:
       "Enter an LLM model."
     case .duplicateHotkeys:
-      "Dictation and command hotkeys must be different."
+      "Each mode needs its own shortcut."
     case .unusableHotkey:
       "Choose a supported hotkey with modifiers."
     case .emptyTargetLanguage:
       "Enter a language to translate into."
+    case .incompleteCustomMode:
+      "Give each custom mode a name and instructions."
     }
   }
 }
@@ -234,6 +314,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
   public var cleanupEngine: CleanupEngine
   /// Show a rough transcript above the HUD while recording.
   public var livePreview: Bool
+  /// The user's own modes, in the order Settings lists them.
+  public var customModes: [CustomMode]
 
   public init(
     dictationHotkey: Hotkey,
@@ -255,7 +337,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     customInstructions: String = "",
     soundFeedback: Bool = true,
     cleanupEngine: CleanupEngine = .languageModel,
-    livePreview: Bool = true
+    livePreview: Bool = true,
+    customModes: [CustomMode] = []
   ) {
     self.dictationHotkey = dictationHotkey
     self.commandHotkey = commandHotkey
@@ -277,6 +360,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     self.soundFeedback = soundFeedback
     self.cleanupEngine = cleanupEngine
     self.livePreview = livePreview
+    self.customModes = customModes
   }
 
   // Decoded field by field with defaults rather than synthesized, so settings
@@ -326,6 +410,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
       ?? .languageModel
     livePreview =
       try container.decodeIfPresent(Bool.self, forKey: .livePreview) ?? true
+    customModes =
+      try container.decodeIfPresent([CustomMode].self, forKey: .customModes) ?? []
   }
 
   /// Refinement runs only with a model configured and privacy mode off.
@@ -365,6 +451,15 @@ public struct AppSettings: Codable, Equatable, Sendable {
       && !trimmed(translationTargetLanguage).isEmpty
   }
 
+  /// Custom modes use the language model, so they share its requirements.
+  public var areCustomModesActive: Bool {
+    !privacyMode && !trimmed(llmModel).isEmpty
+  }
+
+  public func customMode(id: UUID) -> CustomMode? {
+    customModes.first { $0.id == id }
+  }
+
   public var isAskActive: Bool {
     askHotkey != nil && !privacyMode && !trimmed(llmModel).isEmpty
   }
@@ -380,6 +475,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
       translateHotkey
     case .ask:
       askHotkey
+    case .custom:
+      // Each custom mode has its own shortcut; see `customModes`.
+      nil
     }
   }
 
@@ -394,7 +492,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
   public func validated() throws -> AppSettings {
     let trimmedModel = trimmed(llmModel)
     let trimmedLanguage = trimmed(translationTargetLanguage)
-    let llmModes: [Hotkey?] = [commandHotkey, translateHotkey, askHotkey]
+    let llmModes: [Hotkey?] =
+      [commandHotkey, translateHotkey, askHotkey] + customModes.map(\.hotkey)
 
     // Structural problems are reported before missing values. Binding two modes
     // to one chord while the language box happens to be empty is a collision,
@@ -410,6 +509,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
       throw AppSettingsValidationError.unusableHotkey
     }
 
+    guard customModes.allSatisfy(\.isComplete) else {
+      throw AppSettingsValidationError.incompleteCustomMode
+    }
     if !privacyMode, trimmedModel.isEmpty, llmModes.contains(where: { $0 != nil }) {
       throw AppSettingsValidationError.emptyModel
     }

@@ -75,7 +75,7 @@ struct HistoryView: View {
       VStack(alignment: .leading, spacing: 20) {
         HStack(spacing: 8) {
           ModeDot(mode: entry.mode)
-          Text(entry.mode.shortName)
+          Text(entry.modeName ?? entry.mode.shortName)
             .fontWeight(.semibold)
           Text(metadata(for: entry))
             .foregroundStyle(.secondary)
@@ -208,6 +208,9 @@ private struct HistoryRow: View {
 
   private var subtitle: String {
     var parts: [String] = []
+    if let modeName = entry.modeName {
+      parts.append(modeName)
+    }
     if let name = entry.applicationName {
       parts.append(name)
     }

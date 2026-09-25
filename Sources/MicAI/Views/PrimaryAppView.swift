@@ -19,12 +19,33 @@ struct PrimaryAppView: View {
             columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)],
             spacing: 14
           ) {
-            ForEach(MicAIMode.allCases, id: \.self) { mode in
+            ForEach(MicAIMode.builtIn, id: \.self) { mode in
               ModeCard(
                 mode: mode,
+                title: mode.shortName,
+                summary: mode.summary,
                 hotkey: appModel.settingsStore.settings.hotkey(for: mode),
                 availability: availability(for: mode)
               )
+            }
+          }
+        }
+
+        if !appModel.settingsStore.settings.customModes.isEmpty {
+          section("Your modes") {
+            LazyVGrid(
+              columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)],
+              spacing: 14
+            ) {
+              ForEach(appModel.settingsStore.settings.customModes) { customMode in
+                ModeCard(
+                  mode: .custom,
+                  title: customMode.name,
+                  summary: customMode.instructions,
+                  hotkey: customMode.hotkey,
+                  availability: customAvailability(for: customMode)
+                )
+              }
             }
           }
         }
@@ -91,6 +112,17 @@ struct PrimaryAppView: View {
     }
   }
 
+  private func customAvailability(for customMode: CustomMode) -> String? {
+    if customMode.hotkey == nil {
+      return "No shortcut"
+    }
+    let settings = appModel.settingsStore.settings
+    if settings.privacyMode {
+      return "Paused in privacy mode"
+    }
+    return settings.areCustomModesActive ? nil : "Needs a model"
+  }
+
   /// Why a mode would not run right now, or nil when it would.
   private func availability(for mode: MicAIMode) -> String? {
     let settings = appModel.settingsStore.settings
@@ -117,6 +149,8 @@ struct PrimaryAppView: View {
 
 private struct ModeCard: View {
   let mode: MicAIMode
+  let title: String
+  let summary: String
   let hotkey: Hotkey?
   let availability: String?
 
@@ -134,11 +168,12 @@ private struct ModeCard: View {
           KeyCaps(hotkey)
         }
       }
-      Text(mode.shortName)
+      Text(title)
         .font(.headline)
-      Text(mode.summary)
+      Text(summary)
         .font(.callout)
         .foregroundStyle(.secondary)
+        .lineLimit(3)
         .fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 0)
       Label(

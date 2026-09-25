@@ -131,6 +131,7 @@ struct AppSettingsTests {
           "soundFeedback",
           "cleanupEngine",
           "livePreview",
+          "customModes",
         ]
     )
     #expect(try JSONDecoder().decode(AppSettings.self, from: data) == settings)
@@ -405,6 +406,7 @@ struct FeatureSettingsCompatibilityTests {
     #expect(settings.soundFeedback)
     #expect(settings.cleanupEngine == .languageModel)
     #expect(settings.livePreview)
+    #expect(settings.customModes.isEmpty)
   }
 
   @Test

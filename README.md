@@ -20,6 +20,11 @@ Four modes, each on its own keyboard shortcut:
 
 Command, Translate and Ask AI are off until you turn them on in Settings.
 
+You can add your own **custom modes** too. Each has a name, instructions for
+the model, its own shortcut, and whether the result is typed at the cursor or
+shown in a window. Templates include an email reply, bullet points, and a
+prompt for a coding agent.
+
 Also included:
 
 - **Vocabulary.** Corrections for names and jargon, applied on the Mac. Fix a

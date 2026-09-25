@@ -1,9 +1,15 @@
 import AppKit
 import MicAICore
 
+/// Which shortcut fired: one of the built-in modes, or a custom mode by id.
+enum HotkeyBindingID: Hashable, Sendable {
+  case mode(MicAIMode)
+  case custom(UUID)
+}
+
 @MainActor
 final class GlobalHotkeyMonitor {
-  typealias ActionHandler = @MainActor @Sendable (MicAIMode, HotkeyAction) -> Void
+  typealias ActionHandler = @MainActor @Sendable (HotkeyBindingID, HotkeyAction) -> Void
 
   // One machine and chord tracker per mode, keyed rather than four sets of
   // fields: adding AI Translate and Ask AI to a hardcoded pair meant every
@@ -15,7 +21,10 @@ final class GlobalHotkeyMonitor {
   }
 
   private var monitor: Any?
-  private var bindings: [MicAIMode: Binding] = [:]
+  private var bindings: [HotkeyBindingID: Binding] = [:]
+  /// Built-in modes first, then custom modes in Settings order, so a collision
+  /// that slipped past validation still resolves the same way every time.
+  private var order: [HotkeyBindingID] = []
   private let actionHandler: ActionHandler
   private let cancelHandler: @MainActor @Sendable () -> Void
 
@@ -33,34 +42,61 @@ final class GlobalHotkeyMonitor {
     rebuild(from: settings)
   }
 
+  /// Resets one built-in mode, or every custom mode for `.custom`: at most one
+  /// operation runs at a time, so whichever custom mode it was is covered.
   func reset(mode: MicAIMode) {
-    guard var binding = bindings[mode] else {
+    if mode == .custom {
+      for id in order {
+        if case .custom = id {
+          reset(id)
+        }
+      }
+    } else {
+      reset(.mode(mode))
+    }
+  }
+
+  private func reset(_ id: HotkeyBindingID) {
+    guard var binding = bindings[id] else {
       return
     }
     binding.machine = HotkeyStateMachine(
       activationMode: binding.machine.activationMode
     )
     binding.chordTracker = HotkeyChordTracker()
-    bindings[mode] = binding
+    bindings[id] = binding
   }
 
   /// Only dictation honours the hold/toggle preference. The other three are
   /// always hold: a toggled command leaves the app recording with no visible
   /// owner if the user forgets the second press.
   private func rebuild(from settings: AppSettings) {
-    var next: [MicAIMode: Binding] = [:]
-    for mode in MicAIMode.allCases {
+    var next: [HotkeyBindingID: Binding] = [:]
+    var nextOrder: [HotkeyBindingID] = []
+    for mode in MicAIMode.builtIn {
       guard let hotkey = settings.hotkey(for: mode) else {
         continue
       }
       let activation: DictationActivationMode =
         mode == .dictation ? settings.dictationActivationMode : .hold
-      next[mode] = Binding(
+      next[.mode(mode)] = Binding(
         hotkey: hotkey,
         machine: HotkeyStateMachine(activationMode: activation)
       )
+      nextOrder.append(.mode(mode))
+    }
+    for customMode in settings.customModes {
+      guard let hotkey = customMode.hotkey else {
+        continue
+      }
+      next[.custom(customMode.id)] = Binding(
+        hotkey: hotkey,
+        machine: HotkeyStateMachine(activationMode: .hold)
+      )
+      nextOrder.append(.custom(customMode.id))
     }
     bindings = next
+    order = nextOrder
   }
 
   func start() {
@@ -86,8 +122,8 @@ final class GlobalHotkeyMonitor {
 
   private func receive(_ event: GlobalHotkeyEvent) {
     if event.kind == .keyDown, event.keyCode == 53, !event.isRepeat {
-      for mode in MicAIMode.allCases {
-        reset(mode: mode)
+      for id in order {
+        reset(id)
       }
       cancelHandler()
       return
@@ -95,8 +131,8 @@ final class GlobalHotkeyMonitor {
 
     // Fixed order so a settings state with two modes on one chord is at least
     // deterministic; `AppSettings.validated()` rejects that case up front.
-    for mode in MicAIMode.allCases {
-      guard var binding = bindings[mode] else {
+    for id in order {
+      guard var binding = bindings[id] else {
         continue
       }
       // Both the chord tracker and the state machine are mutating structs, and
@@ -112,13 +148,13 @@ final class GlobalHotkeyMonitor {
       if matched, let input = inputEvent(from: event) {
         action = binding.machine.handle(input, at: event.timestamp)
       }
-      bindings[mode] = binding
+      bindings[id] = binding
 
       guard matched else {
         continue
       }
       if let action {
-        actionHandler(mode, action)
+        actionHandler(id, action)
       }
       return
     }
