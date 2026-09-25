@@ -45,7 +45,7 @@ extension OperationPhase {
     case .transcribing, .awaitingLLM, .inserting:
       .accentColor
     case .failed:
-      .orange
+      .red
     }
   }
 }

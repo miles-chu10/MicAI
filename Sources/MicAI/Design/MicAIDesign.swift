@@ -7,8 +7,10 @@ import SwiftUI
 // colours, SF Symbols, so it follows light and dark mode and the user's accent
 // colour like any Apple app. Colour carries exactly one meaning on top of that:
 // which mode you are in. Dictation is the neutral one because it is the one you
-// use all day; the three AI modes get a hue each, and the same hue marks that
-// mode in the HUD, the shortcut list, History and the menu.
+// use all day; the AI modes and custom modes get a hue each, and the same hue
+// marks that mode in the HUD, the shortcut list, History and the menu. Status is
+// the only other use of colour: green for ready, red for blocked or failed, and
+// neither is ever a mode's hue.
 
 extension MicAIMode {
   var tint: Color {
@@ -22,7 +24,7 @@ extension MicAIMode {
     case .ask:
       .purple
     case .custom:
-      .pink
+      .teal
     }
   }
 
@@ -158,7 +160,7 @@ struct ReadinessRow: View {
           ready ? readyText : blockedText,
           systemImage: ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
         )
-        .foregroundStyle(ready ? Color.green : Color.orange)
+        .foregroundStyle(ready ? Color.green : Color.red)
         if !ready, let fix {
           Button(fixTitle, action: fix)
             .controlSize(.small)

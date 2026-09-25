@@ -142,7 +142,7 @@ struct RecordingHUDView: View {
     case .inserting:
       .green
     case .failed:
-      .orange
+      .red
     case .transcribing, .awaitingLLM, .idle:
       .white
     }

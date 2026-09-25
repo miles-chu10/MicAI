@@ -21,7 +21,7 @@ struct StyleSettingsPane: View {
         .disabled(!draft.refinementEnabled)
         if let note = cleanupNote {
           Label(note.text, systemImage: note.symbol)
-            .foregroundStyle(note.isWarning ? Color.orange : Color.secondary)
+            .foregroundStyle(note.isWarning ? Color.red : Color.secondary)
         }
       } header: {
         Text("Clean-up")

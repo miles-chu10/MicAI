@@ -221,7 +221,7 @@ private struct SetupBanner: View {
     HStack(spacing: 14) {
       Image(systemName: "exclamationmark.circle.fill")
         .font(.title2)
-        .foregroundStyle(.orange)
+        .foregroundStyle(.red)
         .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 3) {
         Text("Finish setting up MicAI")
@@ -237,6 +237,6 @@ private struct SetupBanner: View {
       .buttonStyle(.borderedProminent)
     }
     .padding(16)
-    .background(.orange.opacity(0.1), in: .rect(cornerRadius: 12))
+    .background(.red.opacity(0.1), in: .rect(cornerRadius: 12))
   }
 }

@@ -154,7 +154,7 @@ private struct SidebarStatus: View {
     let ready = appModel.readiness.dictation.isReady
     HStack(spacing: 7) {
       Circle()
-        .fill(ready ? Color.green : Color.orange)
+        .fill(ready ? Color.green : Color.red)
         .frame(width: 7, height: 7)
       Text(ready ? "Ready · speech on this Mac" : "Setup needed")
         .font(.caption)

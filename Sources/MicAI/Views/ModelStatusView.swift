@@ -28,7 +28,7 @@ struct ModelStatusView: View {
     case .failed(let message):
       HStack {
         Label(message, systemImage: "exclamationmark.triangle.fill")
-          .foregroundStyle(.orange)
+          .foregroundStyle(.red)
         Button("Retry", action: prepare)
       }
     }

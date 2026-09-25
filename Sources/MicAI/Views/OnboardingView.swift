@@ -275,7 +275,7 @@ struct OnboardingView: View {
           ready ? "Allowed" : "Not allowed yet",
           systemImage: ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
         )
-        .foregroundStyle(ready ? Color.green : Color.orange)
+        .foregroundStyle(ready ? Color.green : Color.red)
       }
       .padding(4)
     }
