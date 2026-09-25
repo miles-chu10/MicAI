@@ -130,7 +130,8 @@ struct CustomModeSettingsTests {
 
   @Test
   func templatesAreComplete() {
-    #expect(CustomMode.templates.allSatisfy(\.isComplete))
+    let incomplete = CustomMode.templates.filter { !$0.isComplete }
+    #expect(incomplete.isEmpty)
   }
 
   @Test
