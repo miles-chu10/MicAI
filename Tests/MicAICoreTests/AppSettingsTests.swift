@@ -377,7 +377,9 @@ struct TranslateAndAskSettingsTests {
     #expect(MicAIMode.command.capturesSelection)
     #expect(MicAIMode.translate.capturesSelection)
     #expect(MicAIMode.ask.capturesSelection)
-    #expect(MicAIMode.allCases.count == 4)
+    #expect(MicAIMode.custom.capturesSelection)
+    #expect(MicAIMode.builtIn.count == 4)
+    #expect(MicAIMode.allCases.count == 5)
   }
 
   private func base() -> AppSettings {
