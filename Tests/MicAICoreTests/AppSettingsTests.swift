@@ -221,6 +221,37 @@ struct AppSettingsCompatibilityTests {
   }
 
   @Test
+  func leavingPrivacyModeWithoutAModelSucceedsWithTheModesOff() throws {
+    // Saved while private with no model or language, then switched back from
+    // the menu: the switch must not fail validation.
+    var settings = AppSettings.defaults
+    settings.llmModel = ""
+    settings.commandHotkey = .controlOptionSpace
+    settings.translateHotkey = .controlOptionT
+    settings.askHotkey = .controlOptionA
+    settings.privacyMode = false
+
+    #expect(throws: AppSettingsValidationError.self) { try settings.validated() }
+    let saved = try settings.validated(waivingModelRequirements: true)
+
+    #expect(!saved.privacyMode)
+    #expect(saved.commandHotkey == .controlOptionSpace)
+    #expect(!saved.areCommandsActive)
+    #expect(!saved.isTranslateActive)
+    #expect(!saved.isAskActive)
+  }
+
+  @Test
+  func waivingStillReportsStructuralProblems() {
+    var settings = AppSettings.defaults
+    settings.commandHotkey = settings.dictationHotkey
+
+    #expect(throws: AppSettingsValidationError.duplicateHotkeys) {
+      try settings.validated(waivingModelRequirements: true)
+    }
+  }
+
+  @Test
   func historyLimitIsClampedToASaneRange() throws {
     var settings = AppSettings.defaults
     settings.historyLimit = 0

@@ -67,6 +67,10 @@ final class AppModel: ObservableObject {
   private var operationStartupMode: MicAIMode?
   private var pendingStopMode: MicAIMode?
   private var operationTarget: TargetIdentity?
+  /// A speech model chosen while an operation was running. Switching then
+  /// would unload the recognizer the recording is about to need, so the
+  /// switch waits until the operation ends.
+  private var deferredSpeechModel: SpeechModelChoice?
   private var cancellables: Set<AnyCancellable> = []
 
   private lazy var hotkeyMonitor = GlobalHotkeyMonitor(
@@ -255,6 +259,14 @@ final class AppModel: ObservableObject {
 
   func applySettings() {
     let settings = settingsStore.settings
+    // Privacy mode stops a network mode that is already recording or waiting
+    // on the model, not only the next one: otherwise releasing the key after
+    // the toggle would still send the selection and transcript out.
+    if settings.privacyMode, let mode = operationMode, mode != .dictation {
+      Task {
+        await abandonSelectionMode(mode, reason: .llmForbidden)
+      }
+    }
     hotkeyMonitor.update(settings: settings)
     let client = Self.makeLLMClient(
       for: settings.llmProvider,
@@ -266,12 +278,32 @@ final class AppModel: ObservableObject {
     }
     switchSpeechModelIfNeeded(to: settings.speechModel)
     refreshProviderStatus()
+    applyHistorySettings(settings)
+  }
+
+  /// The store is built once at launch, so a new limit is pushed to it here.
+  /// Turning history off deletes what was kept: with nothing new recorded,
+  /// the old entries would otherwise stay on disk and in usage statistics.
+  private func applyHistorySettings(_ settings: AppSettings) {
+    let historyStore = self.historyStore
+    Task { @MainActor in
+      await historyStore.setLimit(settings.historyLimit)
+      if !settings.historyEnabled {
+        await historyStore.clear()
+      }
+      await refreshStoredCollections()
+    }
   }
 
   /// Loads the newly chosen recognizer. Instant when it is already cached;
   /// otherwise the status returns to "not prepared" so Settings offers the
   /// download instead of dictation failing on a model that is not there.
   private func switchSpeechModelIfNeeded(to choice: SpeechModelChoice) {
+    guard !isOperationActive else {
+      deferredSpeechModel = choice
+      return
+    }
+    deferredSpeechModel = nil
     let recognizer = self.recognizer
     Task { @MainActor in
       guard await recognizer.model != choice else {
@@ -288,7 +320,18 @@ final class AppModel: ObservableObject {
     settings.privacyMode = enabled
     if settingsStore.save(settings) {
       applySettings()
+      return
     }
+    // Privacy mode lets AI shortcuts be saved without a model or language, so
+    // turning it off can fail validation. The toggle must still work: save
+    // with those requirements waived, leave the modes that lack a value off,
+    // and say what is missing.
+    let missing = settingsStore.validationMessage
+    guard !enabled, settingsStore.save(settings, waivingModelRequirements: true) else {
+      return
+    }
+    applySettings()
+    errorMessage = missing
   }
 
   // MARK: - API key
@@ -301,11 +344,13 @@ final class AppModel: ObservableObject {
   func saveAPIKey(_ key: String) {
     KeychainAPIKeyStore.save(key)
     apiKeyRevision += 1
+    refreshProviderStatus()
   }
 
   func removeAPIKey() {
     KeychainAPIKeyStore.delete()
     apiKeyRevision += 1
+    refreshProviderStatus()
   }
 
   var providerName: String {
@@ -657,6 +702,7 @@ final class AppModel: ObservableObject {
         guard await coordinator.complete(operationID: operationID) else {
           throw MicAIError.cancelled
         }
+        await recordDictationHistory(composed)
         complete(composed: composed, diagnostic: error.localizedDescription)
         return
       }
@@ -664,6 +710,7 @@ final class AppModel: ObservableObject {
       guard await coordinator.complete(operationID: operationID) else {
         throw MicAIError.cancelled
       }
+      await recordDictationHistory(composed)
       complete(composed: composed)
     } catch {
       let micAIError = (error as? MicAIError) ?? .insertionFailed
@@ -679,6 +726,13 @@ final class AppModel: ObservableObject {
       operationPhase = .failed(micAIError)
       clearOperation()
     }
+  }
+
+  /// Only after the text went in, so History never lists a dictation that was
+  /// cancelled or failed to insert.
+  private func recordDictationHistory(_ composed: ComposedDictation) async {
+    await composer.recordHistory(for: composed)
+    await refreshStoredCollections()
   }
 
   private func cancelDictation() async {
@@ -813,6 +867,9 @@ final class AppModel: ObservableObject {
     guard let operationID, let target = operationTarget else {
       return
     }
+    guard await isStillActive(.ask) else {
+      return
+    }
 
     operationPhase = .transcribing
     inputLevel = 0
@@ -882,6 +939,9 @@ final class AppModel: ObservableObject {
     guard let operationID, let target = operationTarget, let mode = operationCustomMode else {
       return
     }
+    guard await isStillActive(.custom) else {
+      return
+    }
 
     operationPhase = .transcribing
     inputLevel = 0
@@ -891,6 +951,7 @@ final class AppModel: ObservableObject {
       let model = settingsStore.settings.llmModel
       let produced = try await commandPipeline.finish(
         operationID: operationID,
+        worksOnSelectionAlone: true,
         awaitingLLM: {
           await MainActor.run { appModel.operationPhase = .awaitingLLM }
         },
@@ -953,6 +1014,9 @@ final class AppModel: ObservableObject {
     guard let operationID, let target = operationTarget else {
       return
     }
+    guard await isStillActive(mode) else {
+      return
+    }
 
     operationPhase = .transcribing
     inputLevel = 0
@@ -961,6 +1025,7 @@ final class AppModel: ObservableObject {
       let model = settingsStore.settings.llmModel
       let produced = try await commandPipeline.finish(
         operationID: operationID,
+        worksOnSelectionAlone: mode == .translate,
         awaitingLLM: {
           await MainActor.run { appModel.operationPhase = .awaitingLLM }
         },
@@ -1118,6 +1183,9 @@ final class AppModel: ObservableObject {
     guard let operationID, let target = operationTarget else {
       return
     }
+    guard await isStillActive(.command) else {
+      return
+    }
 
     operationPhase = .transcribing
     inputLevel = 0
@@ -1183,6 +1251,27 @@ final class AppModel: ObservableObject {
       operationPhase = .failed(micAIError)
       clearOperation()
     }
+  }
+
+  /// Stops a network mode that settings no longer allow, and says why.
+  private func abandonSelectionMode(_ mode: MicAIMode, reason: MicAIError) async {
+    guard operationID != nil, operationMode == mode else {
+      return
+    }
+    await cancelSelectionMode(mode)
+    errorMessage = reason.localizedDescription
+    operationPhase = .failed(reason)
+  }
+
+  /// Checked again when a network mode finishes, for a change that landed
+  /// between the key press and the operation starting, where `applySettings`
+  /// has nothing to cancel yet. Returns false after abandoning the operation.
+  private func isStillActive(_ mode: MicAIMode) async -> Bool {
+    guard !isActive(mode) else {
+      return true
+    }
+    await abandonSelectionMode(mode, reason: startBlocker(for: mode))
+    return false
   }
 
   private func cancelSelectionMode(_ mode: MicAIMode) async {
@@ -1331,6 +1420,13 @@ final class AppModel: ObservableObject {
     isHandsFree = false
     livePartial = nil
     operationCustomMode = nil
+    applyDeferredSpeechModel()
+  }
+
+  private func applyDeferredSpeechModel() {
+    if let deferredSpeechModel {
+      switchSpeechModelIfNeeded(to: deferredSpeechModel)
+    }
   }
 
   private func rejectDictationStart(with error: MicAIError) {
@@ -1347,6 +1443,7 @@ final class AppModel: ObservableObject {
       operationPhase = .idle
       inputLevel = 0
       resetAllHotkeys()
+      applyDeferredSpeechModel()
       return
     }
     switch operationMode {
@@ -1368,13 +1465,30 @@ final class AppModel: ObservableObject {
     }
   }
 
+  /// Configured means a model is set, the chosen provider has what it needs
+  /// to sign in, and something uses it: clean-up, Command, Translate, Ask AI
+  /// or a custom mode. Not the Command shortcut alone, since any of those
+  /// sends requests through the same provider.
   private func refreshProviderStatus() {
     let settings = settingsStore.settings
-    let configured =
-      settings.commandHotkey != nil
-      && !settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let usesProvider =
+      settings.refinementRoute == .languageModel
+      || settings.commandHotkey != nil
+      || settings.translateHotkey != nil
+      || settings.askHotkey != nil
+      || !settings.customModes.isEmpty
+    let hasModel = !settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let hasCredentials: Bool
+    switch settings.llmProvider {
+    case .chatGPTSubscription:
+      // The Codex sign-in file is read per request; a missing or expired one
+      // is reported by the client when it is used.
+      hasCredentials = true
+    case .openAIAPIKey:
+      hasCredentials = KeychainAPIKeyStore.hasKey
+    }
 
-    providerStatus = configured ? .readyToAttempt : .notConfigured
+    providerStatus = usesProvider && hasModel && hasCredentials ? .readyToAttempt : .notConfigured
   }
 }
 

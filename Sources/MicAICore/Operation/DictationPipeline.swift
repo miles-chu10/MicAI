@@ -62,7 +62,10 @@ public actor DictationPipeline {
     }
   }
 
-  public func finish(operationID: UUID) async throws -> Transcript {
+  /// `allowingSilence` is for modes that can work on a selection alone: a
+  /// recording too short or too quiet to transcribe then ends as an empty
+  /// transcript rather than failing the operation.
+  public func finish(operationID: UUID, allowingSilence: Bool = false) async throws -> Transcript {
     // The preview shares the recognizer. Waiting for it to finish means the
     // final pass never runs alongside a preview pass.
     await stopPreview(operationID)
@@ -80,9 +83,17 @@ public actor DictationPipeline {
       _ = await coordinator.fail(operationID: operationID, error: .audioUnavailable)
       throw MicAIError.audioUnavailable
     }
+    let audioDuration = Double(audio.samples.count) / Double(Self.requiredSampleRate)
     guard audio.samples.count >= Self.minimumSampleCount else {
-      _ = await coordinator.fail(operationID: operationID, error: .audioTooShort)
-      throw MicAIError.audioTooShort
+      guard allowingSilence else {
+        _ = await coordinator.fail(operationID: operationID, error: .audioTooShort)
+        throw MicAIError.audioTooShort
+      }
+      await coordinator.stopRecording(operationID: operationID)
+      guard await coordinator.isCurrent(operationID: operationID) else {
+        throw MicAIError.cancelled
+      }
+      return Self.silence(lasting: audioDuration)
     }
 
     await coordinator.stopRecording(operationID: operationID)
@@ -98,6 +109,9 @@ public actor DictationPipeline {
       try Task.checkCancellation()
       let cleanedText = cleaner.clean(transcript.text)
       guard !cleanedText.isEmpty else {
+        if allowingSilence {
+          return Self.silence(lasting: transcript.audioDuration)
+        }
         throw MicAIError.asrFailed
       }
       return Transcript(
@@ -135,6 +149,10 @@ public actor DictationPipeline {
       }
       throw MicAIError.asrFailed
     }
+  }
+
+  private static func silence(lasting audioDuration: TimeInterval) -> Transcript {
+    Transcript(text: "", audioDuration: audioDuration, processingDuration: 0, confidence: 0)
   }
 
   public func cancel(operationID: UUID) async {

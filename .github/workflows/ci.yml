@@ -40,7 +40,8 @@ jobs:
       - name: Show toolchain
         run: |
           swift --version
-          xcodebuild -version
+          xcode-select --print-path
+          echo "macOS SDK $(xcrun --sdk macosx --show-sdk-version)"
 
       - name: Cache SwiftPM build
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0

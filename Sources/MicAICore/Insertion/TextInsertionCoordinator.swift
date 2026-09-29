@@ -68,10 +68,13 @@ public actor TextInsertionCoordinator {
     }
 
     let original = try pasteboard.snapshot()
-    let text: String
+    let text = intent.text
+    let collapsesSelection: Bool
     switch intent {
-    case .insert(let insertion), .replaceSelection(let insertion):
-      text = insertion
+    case .insert, .replaceSelection:
+      collapsesSelection = false
+    case .insertAfterSelection:
+      collapsesSelection = true
     }
 
     let writtenChangeCount: Int
@@ -107,6 +110,9 @@ public actor TextInsertionCoordinator {
     }
 
     do {
+      if collapsesSelection {
+        try keyboard.collapseSelectionToEnd()
+      }
       try keyboard.paste()
     } catch {
       try restoreBeforePaste(

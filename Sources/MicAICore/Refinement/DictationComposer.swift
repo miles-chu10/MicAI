@@ -9,7 +9,9 @@ public struct ComposedDictation: Sendable, Equatable {
   /// Set when refinement was attempted and failed. The text is still usable —
   /// this exists so the HUD can explain why it reads rougher than usual.
   public let refinementFailure: MicAIError?
-  public let historyEntryID: UUID?
+  /// What History will show for this dictation, or nil with history off. Not
+  /// yet stored: `recordHistory(for:)` saves it once the text is really in.
+  public let historyEntry: HistoryEntry?
   /// Set when the whole utterance was a snippet trigger and `text` is the
   /// snippet's expansion.
   public let snippetID: UUID?
@@ -19,15 +21,19 @@ public struct ComposedDictation: Sendable, Equatable {
     tone: StyleTone?,
     refined: Bool,
     refinementFailure: MicAIError? = nil,
-    historyEntryID: UUID? = nil,
+    historyEntry: HistoryEntry? = nil,
     snippetID: UUID? = nil
   ) {
     self.text = text
     self.tone = tone
     self.refined = refined
     self.refinementFailure = refinementFailure
-    self.historyEntryID = historyEntryID
+    self.historyEntry = historyEntry
     self.snippetID = snippetID
+  }
+
+  public var historyEntryID: UUID? {
+    historyEntry?.id
   }
 }
 
@@ -43,8 +49,11 @@ public struct ComposedDictation: Sendable, Equatable {
 /// 1. vocabulary substitution runs first, locally, so proper nouns are right
 ///    even when refinement is off or offline,
 /// 2. refinement runs second and sees the corrected spelling,
-/// 3. history records both the raw transcript and the final text, so a later
+/// 3. history keeps both the raw transcript and the final text, so a later
 ///    correction can be diffed against what the recognizer actually heard.
+///    `compose` only prepares that entry; the caller saves it with
+///    `recordHistory(for:)` after insertion succeeds, so a cancelled or failed
+///    dictation never shows up in History or usage statistics.
 public actor DictationComposer {
   private let refiner: any TranscriptRefining
   private let vocabulary: VocabularyStore
@@ -85,7 +94,7 @@ public actor DictationComposer {
       let snippet = SnippetMatcher.match(rawText, in: await snippets.all())
     {
       await snippets.recordUse(snippetID: snippet.id)
-      let historyEntryID = await recordHistory(
+      let historyEntry = makeHistoryEntry(
         mode: mode,
         rawText: rawText,
         finalText: snippet.text,
@@ -99,7 +108,7 @@ public actor DictationComposer {
         text: snippet.text,
         tone: nil,
         refined: false,
-        historyEntryID: historyEntryID,
+        historyEntry: historyEntry,
         snippetID: snippet.id
       )
     }
@@ -138,7 +147,7 @@ public actor DictationComposer {
       }
     }
 
-    let historyEntryID = await recordHistory(
+    let historyEntry = makeHistoryEntry(
       mode: mode,
       rawText: rawText,
       finalText: text,
@@ -154,11 +163,18 @@ public actor DictationComposer {
       tone: tone,
       refined: refined,
       refinementFailure: failure,
-      historyEntryID: historyEntryID
+      historyEntry: historyEntry
     )
   }
 
-  private func recordHistory(
+  /// Saves the entry `compose` prepared. Call after the text was inserted.
+  public func recordHistory(for composed: ComposedDictation) async {
+    if let entry = composed.historyEntry {
+      await history.record(entry)
+    }
+  }
+
+  private func makeHistoryEntry(
     mode: MicAIMode,
     rawText: String,
     finalText: String,
@@ -167,11 +183,11 @@ public actor DictationComposer {
     transcript: Transcript,
     refined: Bool,
     settings: AppSettings
-  ) async -> UUID? {
+  ) -> HistoryEntry? {
     guard settings.historyEnabled else {
       return nil
     }
-    let entry = HistoryEntry(
+    return HistoryEntry(
       mode: mode,
       rawTranscript: rawText,
       finalText: finalText,
@@ -181,8 +197,6 @@ public actor DictationComposer {
       audioDuration: transcript.audioDuration,
       refined: refined
     )
-    await history.record(entry)
-    return entry.id
   }
 
   /// Applies a correction the user typed in the history list and persists any

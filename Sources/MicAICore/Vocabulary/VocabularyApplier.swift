@@ -35,7 +35,10 @@ public struct VocabularyApplier: Sendable {
     for entry in usableEntries {
       let heard = entry.heard.trimmingCharacters(in: .whitespacesAndNewlines)
       let written = entry.written.trimmingCharacters(in: .whitespacesAndNewlines)
-      let pattern = "\\b\(NSRegularExpression.escapedPattern(for: heard))\\b"
+      // Not `\b`: that needs a word character on the inside, so a term that
+      // starts or ends in a symbol ("C++", ".NET") would never match. These
+      // only require no word character right outside the term.
+      let pattern = "(?<!\\w)\(NSRegularExpression.escapedPattern(for: heard))(?!\\w)"
       guard
         let regex = try? NSRegularExpression(
           pattern: pattern,

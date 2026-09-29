@@ -62,7 +62,7 @@ struct PrivacySettingsPane: View {
       } header: {
         Text("History")
       } footer: {
-        Text("Stored on this Mac only, in Application Support. Never uploaded.")
+        Text("Stored on this Mac only, never uploaded. Turning history off deletes it.")
       }
     }
     .formStyle(.grouped)

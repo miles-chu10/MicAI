@@ -440,7 +440,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
   /// AI Commands need the network, so privacy mode disables them outright.
   public var areCommandsActive: Bool {
-    commandHotkey != nil && !privacyMode
+    commandHotkey != nil && !privacyMode && !trimmed(llmModel).isEmpty
   }
 
   /// Translation needs the model and a destination language.
@@ -489,7 +489,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     AppStyleResolver(overrides: styleOverrides, defaultTone: defaultTone)
   }
 
-  public func validated() throws -> AppSettings {
+  /// `waivingModelRequirements` is for leaving privacy mode from the menu.
+  /// Privacy mode lets AI shortcuts be saved without a model or a language,
+  /// and switching it off must not fail on that: the modes missing a value
+  /// stay inactive until it is set.
+  public func validated(waivingModelRequirements waived: Bool = false) throws -> AppSettings {
     let trimmedModel = trimmed(llmModel)
     let trimmedLanguage = trimmed(translationTargetLanguage)
     let llmModes: [Hotkey?] =
@@ -512,10 +516,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     guard customModes.allSatisfy(\.isComplete) else {
       throw AppSettingsValidationError.incompleteCustomMode
     }
-    if !privacyMode, trimmedModel.isEmpty, llmModes.contains(where: { $0 != nil }) {
+    let requiresValues = !privacyMode && !waived
+    if requiresValues, trimmedModel.isEmpty, llmModes.contains(where: { $0 != nil }) {
       throw AppSettingsValidationError.emptyModel
     }
-    if !privacyMode, translateHotkey != nil, trimmedLanguage.isEmpty {
+    if requiresValues, translateHotkey != nil, trimmedLanguage.isEmpty {
       throw AppSettingsValidationError.emptyTargetLanguage
     }
 

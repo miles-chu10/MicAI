@@ -276,6 +276,35 @@ struct TextInsertionCoordinatorTests {
     #expect(keyboard.pasteCount == 0)
   }
 
+  @Test
+  func insertingAfterASelectionCollapsesItBeforePasting() async throws {
+    let keyboard = FakeKeyboard()
+    let coordinator = makeCoordinator(
+      pasteboard: FakePasteboard(items: []),
+      keyboard: keyboard,
+      validator: FakeTargetValidator(responses: [true, true])
+    )
+
+    try await coordinator.apply(.insertAfterSelection("answer"), to: target)
+
+    #expect(keyboard.events == ["collapse", "paste"])
+  }
+
+  @Test
+  func plainInsertionNeverMovesTheCursor() async throws {
+    let keyboard = FakeKeyboard()
+    let coordinator = makeCoordinator(
+      pasteboard: FakePasteboard(items: []),
+      keyboard: keyboard,
+      validator: FakeTargetValidator(responses: [true, true])
+    )
+
+    try await coordinator.apply(.insert("dictated"), to: target)
+    try await coordinator.apply(.replaceSelection("rewritten"), to: target)
+
+    #expect(keyboard.events == ["paste", "paste"])
+  }
+
   private func makeCoordinator(
     pasteboard: FakePasteboard,
     keyboard: FakeKeyboard,
@@ -369,6 +398,7 @@ final class FakeKeyboard: KeyboardSynthesizing, @unchecked Sendable {
   private let pasteError: MicAIError?
   private var storedCopyCount = 0
   private var storedPasteCount = 0
+  private var storedEvents: [String] = []
 
   init(
     onCopy: @escaping @Sendable () -> Void = {},
@@ -386,16 +416,32 @@ final class FakeKeyboard: KeyboardSynthesizing, @unchecked Sendable {
     locked { storedPasteCount }
   }
 
+  /// Every synthesized key, in order, so a test can tell a collapse that came
+  /// before the paste from one that came after.
+  var events: [String] {
+    locked { storedEvents }
+  }
+
   func copy() throws {
-    locked { storedCopyCount += 1 }
+    locked {
+      storedCopyCount += 1
+      storedEvents.append("copy")
+    }
     onCopy()
   }
 
   func paste() throws {
-    locked { storedPasteCount += 1 }
+    locked {
+      storedPasteCount += 1
+      storedEvents.append("paste")
+    }
     if let pasteError {
       throw pasteError
     }
+  }
+
+  func collapseSelectionToEnd() throws {
+    locked { storedEvents.append("collapse") }
   }
 
   private func locked<T>(_ operation: () -> T) -> T {

@@ -33,8 +33,14 @@ public struct Snippet: Codable, Equatable, Sendable, Identifiable {
 /// paste the address), and a dictation that silently turned into something
 /// else is worse than one that needs to be said again.
 public enum SnippetMatcher {
+  /// Apostrophes are dropped rather than turned into spaces, because the
+  /// recognizer writes a contraction either way: "what's" and "whats" must
+  /// normalise alike, not to "what s" and "whats".
+  private static let apostrophes: Set<Unicode.Scalar> = ["'", "\u{2019}", "\u{2018}", "\u{02BC}"]
+
   public static func normalize(_ text: String) -> String {
-    let stripped = text.lowercased().unicodeScalars.map { scalar -> Character in
+    let scalars = text.lowercased().unicodeScalars.filter { !apostrophes.contains($0) }
+    let stripped = scalars.map { scalar -> Character in
       CharacterSet.punctuationCharacters.contains(scalar)
         || CharacterSet.symbols.contains(scalar)
         ? " " : Character(scalar)

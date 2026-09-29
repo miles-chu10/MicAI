@@ -16,6 +16,15 @@ struct SnippetMatcherTests {
   }
 
   @Test
+  func contractionsMatchWithOrWithoutTheApostrophe() {
+    let address = Snippet(trigger: "what's my address", text: "1 Infinite Loop")
+
+    #expect(SnippetMatcher.match("whats my address", in: [address]) == address)
+    #expect(SnippetMatcher.match("What\u{2019}s my address?", in: [address]) == address)
+    #expect(SnippetMatcher.normalize("what's my address") == "whats my address")
+  }
+
+  @Test
   func triggerInsideASentenceDoesNotFire() {
     #expect(
       SnippetMatcher.match("please add my email signature at the end", in: [signature])

@@ -93,8 +93,9 @@ struct AskEngineTests {
 
     #expect(result.usedSelection)
     #expect(await transformer.lastRequest?.selectedText == "\\\\bslack\\\\b")
-    // Crucially not .replaceSelection: asking about a regex must not overwrite it.
-    #expect(result.insertionIntent == .insert("It matches a word boundary."))
+    // Crucially not .replaceSelection, and not a plain .insert either: the
+    // selection is still active, so pasting at it would overwrite the regex.
+    #expect(result.insertionIntent == .insertAfterSelection("It matches a word boundary."))
   }
 
   @Test

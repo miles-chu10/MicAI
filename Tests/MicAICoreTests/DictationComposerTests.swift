@@ -88,6 +88,9 @@ struct DictationComposerTests {
       target: harness.slackTarget,
       settings: harness.settings()
     )
+    // Composing alone stores nothing: the entry waits for a successful insert.
+    #expect(await harness.history.all().isEmpty)
+    await harness.composer.recordHistory(for: result)
 
     let entries = await harness.history.all()
     #expect(entries.count == 1)
@@ -125,6 +128,7 @@ struct DictationComposerTests {
       target: nil,
       settings: harness.settings()
     )
+    await harness.composer.recordHistory(for: result)
     let entryID = try #require(result.historyEntryID)
 
     let proposals = await harness.composer.applyCorrection(
@@ -172,7 +176,7 @@ struct DictationComposerTests {
     #expect(!result.refined)
     #expect(await harness.refiner.callCount == 0)
     #expect(await harness.snippets.all().first?.useCount == 1)
-    #expect(await harness.history.all().first?.finalText == "Best,\nMiles")
+    #expect(result.historyEntry?.finalText == "Best,\nMiles")
   }
 
   @Test
