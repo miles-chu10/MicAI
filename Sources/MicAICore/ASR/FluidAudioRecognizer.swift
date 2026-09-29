@@ -8,17 +8,48 @@ public actor FluidAudioRecognizer: SpeechRecognizing {
   private var preparationTask: Task<AsrManager, Error>?
   private var observers: [UUID: @Sendable (ModelPreparationState) -> Void] = [:]
   private var preparationState: ModelPreparationState = .notDownloaded
+  private var choice: SpeechModelChoice
 
-  public init() {}
+  public init(model: SpeechModelChoice = .english) {
+    choice = model
+  }
+
+  public var model: SpeechModelChoice {
+    choice
+  }
+
+  /// Switches the model that the next `prepare` loads. The loaded manager is
+  /// dropped, so a dictation never runs on a model the user switched away
+  /// from; the caller re-prepares, which is instant when the new model is
+  /// already cached.
+  public func select(_ model: SpeechModelChoice) {
+    guard model != choice else {
+      return
+    }
+    choice = model
+    manager = nil
+    preparationTask?.cancel()
+    preparationTask = nil
+    publish(.notDownloaded)
+  }
+
+  private var version: AsrModelVersion {
+    switch choice {
+    case .english:
+      .v2
+    case .multilingual:
+      .v3
+    }
+  }
 
   public func prepareCachedIfAvailable(
     progress: @escaping @Sendable (ModelPreparationState) -> Void
   ) async throws -> Bool {
-    let cacheDirectory = AsrModels.defaultCacheDirectory(for: .v2)
+    let cacheDirectory = AsrModels.defaultCacheDirectory(for: version)
     guard
       AsrModels.modelsExist(
         at: cacheDirectory,
-        version: .v2,
+        version: version,
         encoderPrecision: .int8
       )
     else {
@@ -47,9 +78,10 @@ public actor FluidAudioRecognizer: SpeechRecognizing {
     } else {
       publish(.preparing(fraction: 0, phase: "Listing model files"))
       let recognizer = self
+      let version = self.version
       let newTask = Task {
         let models = try await AsrModels.downloadAndLoad(
-          version: .v2,
+          version: version,
           progressHandler: { downloadProgress in
             let state = Self.map(downloadProgress)
             Task { await recognizer.publish(state) }
@@ -65,19 +97,32 @@ public actor FluidAudioRecognizer: SpeechRecognizing {
       task = newTask
     }
 
+    let requested = choice
+    let loaded: AsrManager
     do {
-      manager = try await task.value
-      preparationTask = nil
-      publish(.ready)
-    } catch is CancellationError {
-      preparationTask = nil
-      publish(.failed("Model preparation was cancelled."))
-      throw MicAIError.cancelled
+      loaded = try await task.value
     } catch {
+      // A switch to another model while this one was loading already reset
+      // the state for the new model; reporting this failure would overwrite it.
+      guard choice == requested else {
+        throw MicAIError.cancelled
+      }
       preparationTask = nil
+      if error is CancellationError {
+        publish(.failed("Model preparation was cancelled."))
+        throw MicAIError.cancelled
+      }
       publish(.failed("Model preparation failed."))
       throw MicAIError.modelDownloadFailed
     }
+    // The user may have switched models while this one was downloading.
+    // Keeping it would mean dictating with the model they just turned off.
+    guard choice == requested else {
+      throw MicAIError.cancelled
+    }
+    manager = loaded
+    preparationTask = nil
+    publish(.ready)
   }
 
   public func transcribe(samples: [Float]) async throws -> Transcript {

@@ -57,6 +57,52 @@ struct DictationPipelineTests {
   }
 
   @Test
+  func shortAudioEndsAsSilenceWhenTheModeAllowsIt() async throws {
+    let audio = FakeAudioCapture(sampleCount: 1_600)
+    let recognizer = FakeSpeechRecognizer(transcript: .fixture)
+    let coordinator = OperationCoordinator()
+    let pipeline = DictationPipeline(
+      audioCapture: audio,
+      recognizer: recognizer,
+      cleaner: TranscriptCleaner(),
+      coordinator: coordinator
+    )
+    let operationID = try await pipeline.begin(target: target) { _ in }
+
+    let transcript = try await pipeline.finish(operationID: operationID, allowingSilence: true)
+
+    #expect(transcript.text.isEmpty)
+    #expect(transcript.audioDuration == 0.1)
+    #expect(await recognizer.transcribeCount == 0)
+    // Still a live operation, ready for the model step.
+    #expect(await coordinator.snapshot().phase == .transcribing)
+  }
+
+  @Test
+  func blankRecognitionEndsAsSilenceWhenTheModeAllowsIt() async throws {
+    let recognizer = FakeSpeechRecognizer(
+      transcript: Transcript(
+        text: "   ",
+        audioDuration: 0.5,
+        processingDuration: 0.1,
+        confidence: 0
+      )
+    )
+    let pipeline = DictationPipeline(
+      audioCapture: FakeAudioCapture(),
+      recognizer: recognizer,
+      cleaner: TranscriptCleaner(),
+      coordinator: OperationCoordinator()
+    )
+    let operationID = try await pipeline.begin(target: target) { _ in }
+
+    let transcript = try await pipeline.finish(operationID: operationID, allowingSilence: true)
+
+    #expect(transcript.text.isEmpty)
+    #expect(await recognizer.transcribeCount == 1)
+  }
+
+  @Test
   func cancellationStopsCaptureAndMakesLateResultInert() async throws {
     let audio = FakeAudioCapture()
     let recognizer = DeferredSpeechRecognizer()

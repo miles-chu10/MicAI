@@ -33,16 +33,23 @@ public actor CommandPipeline {
     self.coordinator = coordinator
   }
 
+  /// `mode` distinguishes AI Commands, AI Translate and Ask AI. All three need
+  /// exactly this preamble -- record audio, then read the selection before the
+  /// user's focus can move -- so they share the pipeline and differ only in the
+  /// closure passed to `finish`.
   public func begin(
+    mode: MicAIMode = .command,
     target: TargetIdentity,
     levels: @escaping @Sendable (Float) -> Void,
-    operationStarted: @escaping @Sendable (UUID) async -> Void = { _ in }
+    operationStarted: @escaping @Sendable (UUID) async -> Void = { _ in },
+    partials: (@Sendable (String) -> Void)? = nil
   ) async throws -> UUID {
     let operationID = try await dictationPipeline.begin(
-      mode: .command,
+      mode: mode,
       target: target,
       levels: levels,
-      operationStarted: operationStarted
+      operationStarted: operationStarted,
+      partials: partials
     )
 
     do {
@@ -63,24 +70,56 @@ public actor CommandPipeline {
     model: String,
     awaitingLLM: @escaping @Sendable () async -> Void = {}
   ) async throws -> CommandResult {
+    let commandEngine = self.commandEngine
+    let produced = try await finish(
+      operationID: operationID,
+      awaitingLLM: awaitingLLM
+    ) { spokenText, selectedText in
+      try await commandEngine.execute(
+        instruction: spokenText,
+        selectedText: selectedText,
+        model: model
+      )
+    }
+    return CommandResult(instruction: produced.instruction, intent: produced.value)
+  }
+
+  /// Runs the transcript and captured selection through `produce`, under the
+  /// same cancellation and error mapping as an AI Command.
+  ///
+  /// Generic in the result so Ask AI can return an answer plus its destination
+  /// rather than an `InsertionIntent` -- an answer does not always go to the
+  /// cursor, and forcing it through the insertion type would have hidden that.
+  ///
+  /// `worksOnSelectionAlone` is for modes that can act on the selection with
+  /// nothing said (Translate, custom modes): when a selection was captured, a
+  /// silent or too-short recording reaches `produce` as empty speech instead
+  /// of failing.
+  public func finish<Value: Sendable>(
+    operationID: UUID,
+    worksOnSelectionAlone: Bool = false,
+    awaitingLLM: @escaping @Sendable () async -> Void = {},
+    produce: @escaping @Sendable (String, String?) async throws -> Value
+  ) async throws -> (instruction: Transcript, value: Value) {
     guard let context = contexts.removeValue(forKey: operationID) else {
       throw MicAIError.invalidTransition
     }
 
-    let instruction = try await dictationPipeline.finish(operationID: operationID)
+    let hasSelection = context.selectedText?.isEmpty == false
+    let instruction = try await dictationPipeline.finish(
+      operationID: operationID,
+      allowingSilence: worksOnSelectionAlone && hasSelection
+    )
     guard await coordinator.markAwaitingLLM(operationID: operationID) else {
       throw MicAIError.cancelled
     }
     await awaitingLLM()
 
-    let commandEngine = self.commandEngine
-    let task = Task<InsertionIntent, Error> {
+    let spokenText = instruction.text
+    let selectedText = context.selectedText
+    let task = Task<Value, Error> {
       try Task.checkCancellation()
-      return try await commandEngine.execute(
-        instruction: instruction.text,
-        selectedText: context.selectedText,
-        model: model
-      )
+      return try await produce(spokenText, selectedText)
     }
     guard
       await coordinator.registerCancellationHandler(
@@ -92,11 +131,11 @@ public actor CommandPipeline {
     }
 
     do {
-      let intent = try await task.value
+      let value = try await task.value
       guard await coordinator.isCurrent(operationID: operationID) else {
         throw MicAIError.cancelled
       }
-      return CommandResult(instruction: instruction, intent: intent)
+      return (instruction, value)
     } catch let error as MicAIError {
       if await coordinator.isCurrent(operationID: operationID) {
         _ = await coordinator.fail(operationID: operationID, error: error)

@@ -20,6 +20,9 @@ public protocol PasteboardAccessing: Sendable {
 public protocol KeyboardSynthesizing: Sendable {
   func copy() throws
   func paste() throws
+  /// Moves the insertion point to the end of the selection without changing
+  /// any text, so the next paste lands after it instead of replacing it.
+  func collapseSelectionToEnd() throws
 }
 
 public protocol TargetValidating: Sendable {

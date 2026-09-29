@@ -3,14 +3,21 @@ import MicAICore
 
 struct CGEventKeyboardSynthesizer: KeyboardSynthesizing, Sendable {
   func copy() throws {
-    try postCommandKey(virtualKey: 8)
+    try postKey(virtualKey: 8, flags: .maskCommand)
   }
 
   func paste() throws {
-    try postCommandKey(virtualKey: 9)
+    try postKey(virtualKey: 9, flags: .maskCommand)
   }
 
-  private func postCommandKey(virtualKey: CGKeyCode) throws {
+  /// Right Arrow with no modifiers: in a text view this collapses a selection
+  /// to its end without editing anything. The flags are set explicitly so a
+  /// shortcut the user is still holding cannot turn it into ⌥→ or ⌘→.
+  func collapseSelectionToEnd() throws {
+    try postKey(virtualKey: 124, flags: [])
+  }
+
+  private func postKey(virtualKey: CGKeyCode, flags: CGEventFlags) throws {
     let source = CGEventSource(stateID: .hidSystemState)
     guard
       let keyDown = CGEvent(
@@ -27,8 +34,8 @@ struct CGEventKeyboardSynthesizer: KeyboardSynthesizing, Sendable {
       throw MicAIError.insertionFailed
     }
 
-    keyDown.flags = .maskCommand
-    keyUp.flags = .maskCommand
+    keyDown.flags = flags
+    keyUp.flags = flags
     keyDown.post(tap: .cghidEventTap)
     keyUp.post(tap: .cghidEventTap)
   }
