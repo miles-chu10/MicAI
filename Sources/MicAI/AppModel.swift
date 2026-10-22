@@ -17,6 +17,10 @@ final class AppModel: ObservableObject {
   /// The text MicAI last put somewhere: inserted, or shown as an answer. What
   /// "Paste Last Result" pastes again.
   @Published private(set) var lastResult: String?
+  /// Finished text the current operation is about to insert. If insertion
+  /// fails, it becomes `lastResult` so the menu's Paste and Copy can recover
+  /// it without asking the model again.
+  private var insertionRecovery = InsertionRecovery()
   /// The mode of the operation in flight, for the HUD and the menu bar icon.
   @Published private(set) var operationMode: MicAIMode?
   /// True after a quick tap in "Hold or tap" mode: recording continues until
@@ -25,11 +29,10 @@ final class AppModel: ObservableObject {
   /// A rough transcript of what has been said so far, while recording with
   /// live preview on. Never what gets inserted.
   @Published private(set) var livePartial: String?
-  /// Bumped when the Keychain key changes, since the Keychain cannot be
-  /// observed and Settings needs to redraw its status.
-  @Published private(set) var apiKeyRevision = 0
   /// Tone applied to the most recent dictation, shown in the HUD and history.
   @Published private(set) var lastTone: StyleTone?
+  /// Release-to-insertion timings for this session, in memory only.
+  @Published private(set) var metrics = LocalMetrics()
   /// Set when an Ask AI result was a question rather than content. The answer
   /// window observes this; nil means no answer is waiting.
   @Published var pendingAnswer: AskAnswer?
@@ -45,10 +48,10 @@ final class AppModel: ObservableObject {
   private let pipeline: DictationPipeline
   private let commandPipeline: CommandPipeline
   private let targetTracker: TargetApplicationTracker
-  private let insertionCoordinator: TextInsertionCoordinator
+  private let insertionCoordinator: AdaptiveTextInsertionCoordinator
   private let hudController: RecordingHUDController
   private let providerStatusRelay: ProviderStatusRelay
-  private let llmClient: SwitchingLLMClient
+  private let codexCLIAvailable: Bool
   private let vocabularyStore: VocabularyStore
   private let snippetStore: SnippetStore
   private let historyStore: TranscriptHistoryStore
@@ -72,6 +75,7 @@ final class AppModel: ObservableObject {
   /// switch waits until the operation ends.
   private var deferredSpeechModel: SpeechModelChoice?
   private var cancellables: Set<AnyCancellable> = []
+  private var timingRecorder = PhaseTimingRecorder()
 
   private lazy var hotkeyMonitor = GlobalHotkeyMonitor(
     settings: settingsStore.settings,
@@ -89,6 +93,7 @@ final class AppModel: ObservableObject {
     let recognizer = FluidAudioRecognizer(model: settingsStore.settings.speechModel)
     let targetTracker = TargetApplicationTracker()
     let providerStatusRelay = ProviderStatusRelay()
+    let codexExecutableURL = CodexCLIClient.locateExecutable()
 
     self.settingsStore = settingsStore
     microphonePermission = MicrophonePermissionService()
@@ -96,6 +101,7 @@ final class AppModel: ObservableObject {
     launchAtLogin = LaunchAtLoginService()
     hudController = RecordingHUDController()
     self.providerStatusRelay = providerStatusRelay
+    codexCLIAvailable = codexExecutableURL != nil
     self.coordinator = coordinator
     self.recognizer = recognizer
     self.targetTracker = targetTracker
@@ -105,26 +111,26 @@ final class AppModel: ObservableObject {
       cleaner: TranscriptCleaner(),
       coordinator: coordinator
     )
-    let insertionCoordinator = TextInsertionCoordinator(
+    let clipboardInsertionCoordinator = TextInsertionCoordinator(
       pasteboard: SystemPasteboardAdapter(),
       keyboard: CGEventKeyboardSynthesizer(),
       targetValidator: targetTracker
     )
-    self.insertionCoordinator = insertionCoordinator
-    // One client for every path, so a 401 refresh or a rate-limit status seen
-    // by refinement is the same status AI Commands reports, and switching the
-    // provider in Settings switches all four modes at once.
-    let llmClient = SwitchingLLMClient(
-      Self.makeLLMClient(
-        for: settingsStore.settings.llmProvider,
-        statusHandler: providerStatusRelay.send
-      )
+    insertionCoordinator = AdaptiveTextInsertionCoordinator(
+      directInserter: targetTracker,
+      clipboardFallback: clipboardInsertionCoordinator
     )
-    self.llmClient = llmClient
+    // One client for every AI path, so a provider status seen by one path is
+    // the status every path reports.
+    let llmClient = CodexCLIClient(
+      executableURL: codexExecutableURL,
+      statusHandler: providerStatusRelay.send,
+      usageHandler: providerStatusRelay.sendUsage
+    )
     commandPipeline = CommandPipeline(
       dictationPipeline: pipeline,
       commandEngine: CommandEngine(transformer: llmClient),
-      insertionCoordinator: insertionCoordinator,
+      insertionCoordinator: clipboardInsertionCoordinator,
       coordinator: coordinator
     )
     // Falls back to a temp-directory store if Application Support is
@@ -184,10 +190,20 @@ final class AppModel: ObservableObject {
         }
         .store(in: &cancellables)
     }
+    $operationPhase
+      .sink { [weak self] phase in
+        self?.observeForMetrics(phase)
+      }
+      .store(in: &cancellables)
     bindHUD()
     providerStatusRelay.setHandler { [weak self] status in
       Task { @MainActor [weak self] in
         self?.providerStatus = status
+      }
+    }
+    providerStatusRelay.setUsageHandler { [weak self] report in
+      Task { @MainActor [weak self] in
+        self?.metrics.record(report)
       }
     }
 
@@ -206,14 +222,50 @@ final class AppModel: ObservableObject {
       accessibilityGranted: accessibilityPermission.isTrusted,
       speechModelReady: modelState == .ready,
       commandHotkeyConfigured: settingsStore.settings.commandHotkey != nil,
-      languageModelConfigured: !settingsStore.settings.llmModel
-        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      commandProviderAvailable: codexCLIAvailable,
       operationActive: operationID != nil || operationAttemptID != nil
     )
   }
 
+  /// Feeds the phase stream to the timing recorder and the local OSLog
+  /// telemetry. Only modes, phases, error codes and durations are logged —
+  /// never transcripts, selections or answers.
+  private func observeForMetrics(_ phase: OperationPhase) {
+    let mode = operationMode
+    switch phase {
+    case .recording:
+      if let mode {
+        MicAITelemetry.operationStarted(mode: mode)
+      }
+    case .failed(let error):
+      if let mode, error != .cancelled {
+        MicAITelemetry.operationFailed(mode: mode, error: error)
+      }
+    case .idle, .transcribing, .awaitingLLM, .inserting:
+      break
+    }
+    if let timing = timingRecorder.observe(phase, mode: mode, at: .now) {
+      metrics.record(timing)
+      let seconds = timing.releaseToInsertion.components
+      MicAITelemetry.operationCompleted(
+        mode: timing.mode,
+        duration: Double(seconds.seconds) + Double(seconds.attoseconds) / 1e18
+      )
+    }
+  }
+
+  var isCodexCLIInstalled: Bool {
+    codexCLIAvailable
+  }
+
   var isOperationActive: Bool {
     operationID != nil || operationAttemptID != nil
+  }
+
+  /// Settings are applied between operations so hotkeys and the model cannot
+  /// change under a recording that is already in flight.
+  var canApplySettings: Bool {
+    !isOperationActive
   }
 
   func prepareModel() {
@@ -268,14 +320,6 @@ final class AppModel: ObservableObject {
       }
     }
     hotkeyMonitor.update(settings: settings)
-    let client = Self.makeLLMClient(
-      for: settings.llmProvider,
-      statusHandler: providerStatusRelay.send
-    )
-    let llmClient = self.llmClient
-    Task {
-      await llmClient.use(client)
-    }
     switchSpeechModelIfNeeded(to: settings.speechModel)
     refreshProviderStatus()
     applyHistorySettings(settings)
@@ -334,32 +378,9 @@ final class AppModel: ObservableObject {
     errorMessage = missing
   }
 
-  // MARK: - API key
-
-  var hasAPIKey: Bool {
-    _ = apiKeyRevision
-    return KeychainAPIKeyStore.hasKey
-  }
-
-  func saveAPIKey(_ key: String) {
-    KeychainAPIKeyStore.save(key)
-    apiKeyRevision += 1
-    refreshProviderStatus()
-  }
-
-  func removeAPIKey() {
-    KeychainAPIKeyStore.delete()
-    apiKeyRevision += 1
-    refreshProviderStatus()
-  }
-
+  /// AI text tasks always go to ChatGPT through the signed-in Codex CLI.
   var providerName: String {
-    switch settingsStore.settings.llmProvider {
-    case .chatGPTSubscription:
-      "ChatGPT"
-    case .openAIAPIKey:
-      "OpenAI"
-    }
+    "ChatGPT"
   }
 
   // MARK: - Last result
@@ -548,6 +569,7 @@ final class AppModel: ObservableObject {
         await cancelDictation()
       case (.command, .startRecording), (.translate, .startRecording),
         (.ask, .startRecording), (.custom, .startRecording):
+        await discardDictationStartedByChord()
         await startSelectionMode(mode)
       case (.command, .stopRecording):
         await finishCommand()
@@ -562,6 +584,25 @@ final class AppModel: ObservableObject {
         await cancelSelectionMode(mode)
       }
     }
+  }
+
+  /// Right Option is also the right-hand ⌥ of every ⌥-chord, so typing, say,
+  /// ⌃⌥Space with it starts a dictation a moment before the command chord
+  /// completes. When that happens the dictation was never intended: drop it
+  /// without a "Cancelled" notice and let the chord's mode start.
+  private func discardDictationStartedByChord() async {
+    guard settingsStore.settings.dictationHotkey == .rightOption,
+      operationMode == .dictation,
+      operationPhase == .recording,
+      let operationID
+    else {
+      return
+    }
+    await pipeline.cancel(operationID: operationID)
+    hotkeyMonitor.reset(mode: .dictation)
+    operationPhase = .idle
+    inputLevel = 0
+    clearOperation()
   }
 
   private func startDictation() async {
@@ -669,12 +710,26 @@ final class AppModel: ObservableObject {
 
       // Never throws: on any refinement failure this returns the raw
       // transcript, so a network problem costs polish, not the dictation.
-      let composed = await composer.compose(
-        transcript: transcript,
-        mode: .dictation,
-        target: target,
-        settings: settings
-      )
+      // Registered with the coordinator so Esc also stops the codex child
+      // that refinement may be waiting on.
+      let composer = self.composer
+      let composeTask = Task {
+        await composer.compose(
+          transcript: transcript,
+          mode: .dictation,
+          target: target,
+          settings: settings
+        )
+      }
+      guard
+        await coordinator.registerCancellationHandler(
+          { composeTask.cancel() },
+          operationID: operationID
+        )
+      else {
+        throw MicAIError.cancelled
+      }
+      let composed = await composeTask.value
       guard await coordinator.isCurrent(operationID: operationID) else {
         throw MicAIError.cancelled
       }
@@ -684,6 +739,7 @@ final class AppModel: ObservableObject {
         throw MicAIError.cancelled
       }
       operationPhase = .inserting
+      insertionRecovery.prepare(composed.text)
       accessibilityPermission.refresh()
       guard accessibilityPermission.isTrusted else {
         throw MicAIError.accessibilityDenied
@@ -722,7 +778,7 @@ final class AppModel: ObservableObject {
       if await coordinator.isCurrent(operationID: operationID) {
         _ = await coordinator.fail(operationID: operationID, error: micAIError)
       }
-      errorMessage = micAIError.localizedDescription
+      errorMessage = failureMessage(for: micAIError)
       operationPhase = .failed(micAIError)
       clearOperation()
     }
@@ -740,10 +796,21 @@ final class AppModel: ObservableObject {
       return
     }
     await pipeline.cancel(operationID: operationID)
+    acknowledgeCancellation(mode: .dictation)
+  }
+
+  /// Returns to idle, then briefly shows "Cancelled" in the HUD so an Esc press
+  /// gets visible confirmation that nothing was inserted.
+  private func acknowledgeCancellation(mode: MicAIMode) {
+    MicAITelemetry.operationCancelled(mode: mode)
     operationPhase = .idle
     errorMessage = nil
     inputLevel = 0
     clearOperation()
+    let hud = hudController.model
+    hud.mode = mode
+    hud.message = "Nothing was inserted"
+    hud.phase = .failed(.cancelled)
   }
 
   /// Shared preamble for AI Commands, AI Translate and Ask AI.
@@ -758,6 +825,7 @@ final class AppModel: ObservableObject {
     }
     let attemptID = UUID()
     operationAttemptID = attemptID
+    let commandSettings = settingsStore.settings
     operationStartupMode = mode
     if mode == .custom {
       operationCustomMode = pendingCustomModeID.flatMap {
@@ -767,6 +835,13 @@ final class AppModel: ObservableObject {
     }
     guard isActive(mode) else {
       rejectStart(mode: mode, with: startBlocker(for: mode))
+      clearOperation(ifAttemptID: attemptID)
+      return
+    }
+    // Checked before recording so the user is not asked to speak, and their
+    // clipboard is not round-tripped, for a command that cannot run.
+    guard codexCLIAvailable else {
+      rejectStart(mode: mode, with: .codexCLIUnavailable)
       clearOperation(ifAttemptID: attemptID)
       return
     }
@@ -802,6 +877,7 @@ final class AppModel: ObservableObject {
       _ = try await commandPipeline.begin(
         mode: mode,
         target: target,
+        model: commandSettings.llmModel,
         levels: { level in
           Task { @MainActor in
             appModel.inputLevel = level
@@ -843,7 +919,7 @@ final class AppModel: ObservableObject {
         return
       }
       let micAIError = (error as? MicAIError) ?? .insertionFailed
-      errorMessage = micAIError.localizedDescription
+      errorMessage = failureMessage(for: micAIError)
       operationPhase = .failed(micAIError)
       clearOperation(ifAttemptID: attemptID)
       hotkeyMonitor.reset(mode: mode)
@@ -1059,6 +1135,7 @@ final class AppModel: ObservableObject {
       throw MicAIError.cancelled
     }
     operationPhase = .inserting
+    insertionRecovery.prepare(output)
     accessibilityPermission.refresh()
     guard accessibilityPermission.isTrusted else {
       throw MicAIError.accessibilityDenied
@@ -1099,7 +1176,7 @@ final class AppModel: ObservableObject {
     if await coordinator.isCurrent(operationID: operationID) {
       _ = await coordinator.fail(operationID: operationID, error: micAIError)
     }
-    errorMessage = micAIError.localizedDescription
+    errorMessage = failureMessage(for: micAIError)
     operationPhase = .failed(micAIError)
     clearOperation()
   }
@@ -1193,7 +1270,6 @@ final class AppModel: ObservableObject {
       let appModel = self
       let result = try await commandPipeline.finish(
         operationID: operationID,
-        model: settingsStore.settings.llmModel,
         awaitingLLM: {
           await MainActor.run {
             appModel.operationPhase = .awaitingLLM
@@ -1204,6 +1280,7 @@ final class AppModel: ObservableObject {
         throw MicAIError.cancelled
       }
       operationPhase = .inserting
+      insertionRecovery.prepare(result.intent.text)
       accessibilityPermission.refresh()
       guard accessibilityPermission.isTrusted else {
         throw MicAIError.accessibilityDenied
@@ -1222,6 +1299,7 @@ final class AppModel: ObservableObject {
         guard await coordinator.complete(operationID: operationID) else {
           throw MicAIError.cancelled
         }
+        lastResult = result.intent.text
         complete(
           transcript: result.instruction,
           diagnostic: error.localizedDescription
@@ -1247,7 +1325,7 @@ final class AppModel: ObservableObject {
       if await coordinator.isCurrent(operationID: operationID) {
         _ = await coordinator.fail(operationID: operationID, error: micAIError)
       }
-      errorMessage = micAIError.localizedDescription
+      errorMessage = failureMessage(for: micAIError)
       operationPhase = .failed(micAIError)
       clearOperation()
     }
@@ -1280,10 +1358,7 @@ final class AppModel: ObservableObject {
     }
     hotkeyMonitor.reset(mode: mode)
     await commandPipeline.cancel(operationID: operationID)
-    operationPhase = .idle
-    errorMessage = nil
-    inputLevel = 0
-    clearOperation()
+    acknowledgeCancellation(mode: mode)
   }
 
   private func complete(transcript: Transcript, diagnostic: String? = nil) {
@@ -1401,10 +1476,23 @@ final class AppModel: ObservableObject {
     }
   }
 
+  /// The error to show, plus where to find finished text that could not be
+  /// inserted. Keeping it is the point: a focus change or a missing
+  /// permission must not cost the user a dictation or a model answer.
+  private func failureMessage(for error: MicAIError) -> String {
+    let outcome = insertionRecovery.outcome(for: error)
+    if let kept = outcome.keptText {
+      lastResult = kept
+      MicAITelemetry.resultHeldForRecovery(mode: operationMode ?? .dictation)
+    }
+    return outcome.message
+  }
+
   private func clearOperation(ifAttemptID expectedAttemptID: UUID? = nil) {
     if let expectedAttemptID, operationAttemptID != expectedAttemptID {
       return
     }
+    insertionRecovery.reset()
     if let operationTarget {
       let targetTracker = self.targetTracker
       Task {
@@ -1436,6 +1524,12 @@ final class AppModel: ObservableObject {
 
   private func cancelActiveOperation() async {
     guard operationID != nil || operationAttemptID != nil else {
+      return
+    }
+    // Once insertion starts the paste may already be delivered, so a late Esc
+    // would report "Cancelled" for text that is in the document. The HUD
+    // stops offering Esc in this phase for the same reason.
+    guard operationPhase != .inserting else {
       return
     }
     guard operationID != nil else {
@@ -1477,34 +1571,13 @@ final class AppModel: ObservableObject {
       || settings.translateHotkey != nil
       || settings.askHotkey != nil
       || !settings.customModes.isEmpty
-    let hasModel = !settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    let hasCredentials: Bool
-    switch settings.llmProvider {
-    case .chatGPTSubscription:
-      // The Codex sign-in file is read per request; a missing or expired one
-      // is reported by the client when it is used.
-      hasCredentials = true
-    case .openAIAPIKey:
-      hasCredentials = KeychainAPIKeyStore.hasKey
-    }
 
-    providerStatus = usesProvider && hasModel && hasCredentials ? .readyToAttempt : .notConfigured
-  }
-}
-
-extension AppModel {
-  fileprivate static func makeLLMClient(
-    for provider: LLMProvider,
-    statusHandler: @escaping @Sendable (ProviderStatus) -> Void
-  ) -> any LLMTransforming {
-    switch provider {
-    case .chatGPTSubscription:
-      ChatGPTResponsesClient(
-        credentialLoader: CodexAuthFileLoader(),
-        statusHandler: statusHandler
-      )
-    case .openAIAPIKey:
-      OpenAIAPIKeyClient(apiKey: { KeychainAPIKeyStore.read() })
+    if !usesProvider {
+      providerStatus = .notConfigured
+    } else if !codexCLIAvailable {
+      providerStatus = .failed(.codexCLIUnavailable)
+    } else {
+      providerStatus = .readyToAttempt
     }
   }
 }
@@ -1512,6 +1585,7 @@ extension AppModel {
 private final class ProviderStatusRelay: @unchecked Sendable {
   private let lock = NSLock()
   private var handler: (@Sendable (ProviderStatus) -> Void)?
+  private var usageHandler: (@Sendable (LLMUsageReport) -> Void)?
 
   func setHandler(
     _ handler: @escaping @Sendable (ProviderStatus) -> Void
@@ -1526,5 +1600,14 @@ private final class ProviderStatusRelay: @unchecked Sendable {
     let handler = self.handler
     lock.unlock()
     handler?(status)
+  }
+
+  func setUsageHandler(_ handler: @escaping @Sendable (LLMUsageReport) -> Void) {
+    lock.withLock { usageHandler = handler }
+  }
+
+  func sendUsage(_ report: LLMUsageReport) {
+    let handler = lock.withLock { usageHandler }
+    handler?(report)
   }
 }

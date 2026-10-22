@@ -5,6 +5,74 @@ import Testing
 @Suite
 struct ChatGPTResponsesClientTests {
   @Test
+  func apiKeyRoutePreCancelledRequestHasNoTransportOrUsage() async {
+    let reports = UsageReportCollector()
+    let transport = FakeTransport([okResponse(deltas: ["unused"])])
+    let client = OpenAIAPIKeyClient(
+      environment: ["OPENAI_API_KEY": "synthetic-not-a-key"],
+      transport: transport,
+      usageHandler: reports.append
+    )
+    let failure = await Task { () -> MicAIError? in
+      withUnsafeCurrentTask { $0?.cancel() }
+      do {
+        _ = try await client.transform(anyRequest())
+        return nil
+      } catch {
+        return error as? MicAIError
+      }
+    }.value
+    #expect(failure == .cancelled)
+    #expect(await transport.requests.isEmpty)
+    #expect(reports.values.isEmpty)
+  }
+
+  @Test
+  func apiKeyRouteReportsUsageSeparatelyFromSubscriptionAndPreservesText() async throws {
+    let reports = UsageReportCollector()
+    let body =
+      deltaFrame("API text")
+      + #"data: {"type":"response.completed","response":{"model":"fixture-resolved","usage":{"input_tokens":1200,"output_tokens":7,"input_tokens_details":{"cached_tokens":1000,"cache_write_tokens":100}}}}"#
+      + "\n\n"
+    let transport = FakeTransport([
+      ResponsesHTTPResponse(statusCode: 200, bodyChunks: [Data(body.utf8)])
+    ])
+    let client = OpenAIAPIKeyClient(
+      environment: ["OPENAI_API_KEY": "synthetic-not-a-key"],
+      transport: transport,
+      usageHandler: reports.append
+    )
+    #expect(try await client.transform(anyRequest()) == "API text")
+    let report = try #require(reports.values.first)
+    #expect(reports.values.count == 1)
+    #expect(report.route == .openAIResponses)
+    #expect(report.responseModel == "fixture-resolved")
+    #expect(report.requestedModel == "gpt-5-codex")
+    #expect(report.usage.cachedInputTokens == 1000)
+    #expect(report.usage.cacheWriteTokens == 100)
+    #expect(await transport.requests.first?.url == OpenAIAPIKeyClient.endpoint)
+  }
+
+  @Test
+  func apiKeyRouteKeepsMissingCountersUnknownAndNeverReportsIncompleteText() async throws {
+    let reports = UsageReportCollector()
+    let client = OpenAIAPIKeyClient(
+      environment: ["OPENAI_API_KEY": "synthetic-not-a-key"],
+      transport: FakeTransport([
+        okResponse(deltas: ["complete"]),
+        ResponsesHTTPResponse(statusCode: 200, bodyChunks: [Data(deltaFrame("partial").utf8)]),
+      ]),
+      usageHandler: reports.append
+    )
+    #expect(try await client.transform(anyRequest()) == "complete")
+    #expect(reports.values.first?.usage == LLMUsage())
+    await #expect(throws: MicAIError.llmIncomplete) {
+      try await client.transform(anyRequest())
+    }
+    #expect(reports.values.count == 1)
+  }
+
+  @Test
   func successReturnsAccumulatedOutputAndSendsVerifiedHeaders() async throws {
     let request = LLMRequest(
       instruction: "make this uppercase",
@@ -51,6 +119,47 @@ struct ChatGPTResponsesClientTests {
     let client = ChatGPTResponsesClient(credentialLoader: loader, transport: transport)
 
     #expect(try await client.transform(anyRequest()) == "HELLO")
+  }
+
+  @Test
+  func reportsCompletionUsageThroughOptionalCallbackWithoutChangingText() async throws {
+    let reports = UsageReportCollector()
+    let body =
+      deltaFrame("OK")
+      + #"data: {"type":"response.completed","response":{"model":"synthetic-text-model","usage":{"input_tokens":1200,"output_tokens":5,"input_tokens_details":{"cached_tokens":1024,"cache_write_tokens":128}}}}"#
+      + "\n\n"
+    let client = ChatGPTResponsesClient(
+      credentialLoader: CountingCredentialLoader(),
+      transport: FakeTransport([
+        ResponsesHTTPResponse(statusCode: 200, bodyChunks: [Data(body.utf8)])
+      ]),
+      usageHandler: reports.append
+    )
+    #expect(try await client.transform(anyRequest()) == "OK")
+    let report = try #require(reports.values.first)
+    #expect(reports.values.count == 1)
+    #expect(report.route == .chatGPTResponses)
+    #expect(report.responseModel == "synthetic-text-model")
+    #expect(report.requestedModel == "gpt-5-codex")
+    #expect(
+      report.usage
+        == LLMUsage(
+          inputTokens: 1200, cachedInputTokens: 1024, cacheWriteTokens: 128, outputTokens: 5))
+    #expect(report.duration >= .zero)
+  }
+
+  @Test
+  func partialResponseNeverReportsUsage() async {
+    let reports = UsageReportCollector()
+    let client = ChatGPTResponsesClient(
+      credentialLoader: CountingCredentialLoader(),
+      transport: FakeTransport([
+        ResponsesHTTPResponse(statusCode: 200, bodyChunks: [Data(deltaFrame("PARTIAL").utf8)])
+      ]),
+      usageHandler: reports.append
+    )
+    await expectFailure(from: client, request: anyRequest(), is: .llmIncomplete)
+    #expect(reports.values.isEmpty)
   }
 
   @Test
@@ -102,12 +211,19 @@ struct ChatGPTResponsesClientTests {
 
   @Test
   func cancellationBeforeResponseHeadersMapsToCancelled() async {
+    let statuses = ProviderStatusCollector()
+    let request = anyRequest()
     let client = ChatGPTResponsesClient(
       credentialLoader: CountingCredentialLoader(),
-      transport: FailingTransport(error: URLError(.cancelled))
+      transport: FailingTransport(error: URLError(.cancelled)),
+      scopedStatusHandler: statuses.append
     )
 
-    await expectFailure(from: client, request: anyRequest(), is: .cancelled)
+    await expectFailure(from: client, request: request, is: .cancelled)
+    #expect(
+      statuses.values == [
+        ProviderStatusEvent(requestID: request.sessionID, status: .failed(.cancelled))
+      ])
   }
 
   @Test
@@ -182,18 +298,23 @@ struct ChatGPTResponsesClientTests {
   @Test
   func providerStatusReportsCredentialRetryAndRecovery() async throws {
     let statuses = ProviderStatusCollector()
+    let request = anyRequest()
     let client = ChatGPTResponsesClient(
       credentialLoader: CountingCredentialLoader(),
       transport: FakeTransport([
         ResponsesHTTPResponse(statusCode: 401, bodyChunks: []),
         okResponse(deltas: ["OK"]),
       ]),
-      statusHandler: statuses.append
+      scopedStatusHandler: statuses.append
     )
 
-    _ = try await client.transform(anyRequest())
+    _ = try await client.transform(request)
 
-    #expect(statuses.values == [.retryingCredential, .readyToAttempt])
+    #expect(
+      statuses.values == [
+        ProviderStatusEvent(requestID: request.sessionID, status: .retryingCredential),
+        ProviderStatusEvent(requestID: request.sessionID, status: .readyToAttempt),
+      ])
   }
 
   @Test
@@ -355,17 +476,22 @@ private final class CountingCredentialLoader: CredentialLoading, @unchecked Send
   }
 }
 
+private struct ProviderStatusEvent: Sendable, Equatable {
+  let requestID: UUID
+  let status: ProviderStatus
+}
+
 private final class ProviderStatusCollector: @unchecked Sendable {
   private let lock = NSLock()
-  private var storedValues: [ProviderStatus] = []
+  private var storedValues: [ProviderStatusEvent] = []
 
-  var values: [ProviderStatus] {
+  var values: [ProviderStatusEvent] {
     lock.withLock { storedValues }
   }
 
-  func append(_ status: ProviderStatus) {
+  func append(requestID: UUID, status: ProviderStatus) {
     lock.withLock {
-      storedValues.append(status)
+      storedValues.append(ProviderStatusEvent(requestID: requestID, status: status))
     }
   }
 }

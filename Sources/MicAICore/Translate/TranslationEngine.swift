@@ -31,9 +31,6 @@ public struct TranslationEngine: Sendable {
     guard !language.isEmpty else {
       throw MicAIError.translationLanguageMissing
     }
-    guard !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      throw MicAIError.llmServerFailure
-    }
 
     // A selection is what the user pointed at, so it wins over the audio. With
     // no selection the utterance itself is the thing to translate.

@@ -171,7 +171,6 @@ private struct SidebarStatus: View {
 struct GeneralSettingsPane: View {
   @ObservedObject var appModel: AppModel
   @Binding var draft: AppSettings
-  @State private var apiKeyEntry = ""
 
   var body: some View {
     Form {
@@ -236,15 +235,13 @@ struct GeneralSettingsPane: View {
       }
 
       Section {
-        Picker("Provider", selection: $draft.llmProvider) {
-          ForEach(LLMProvider.allCases, id: \.self) { provider in
-            Text(provider.displayName).tag(provider)
-          }
-        }
-        if draft.llmProvider == .openAIAPIKey {
-          apiKeyRow
-        }
-        TextField("Model", text: $draft.llmModel, prompt: Text("Model name"))
+        LabeledContent("Provider", value: "ChatGPT, through the Codex CLI")
+        TextField("Model", text: $draft.llmModel, prompt: Text("Codex default"))
+        Text(
+          "This override applies to all AI text tasks. Use a text model; audio transcription has its own model setting."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
         TextField(
           "Translate into",
           text: $draft.translationTargetLanguage,
@@ -298,30 +295,6 @@ struct GeneralSettingsPane: View {
     .formStyle(.grouped)
   }
 
-  @ViewBuilder
-  private var apiKeyRow: some View {
-    LabeledContent("API key") {
-      HStack {
-        if appModel.hasAPIKey {
-          Label("Saved in your Keychain", systemImage: "key.fill")
-            .foregroundStyle(.secondary)
-          Button("Remove") {
-            appModel.removeAPIKey()
-          }
-        } else {
-          SecureField("API key", text: $apiKeyEntry, prompt: Text("sk-…"))
-            .labelsHidden()
-            .frame(maxWidth: 220)
-          Button("Save Key") {
-            appModel.saveAPIKey(apiKeyEntry)
-            apiKeyEntry = ""
-          }
-          .disabled(apiKeyEntry.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-      }
-    }
-  }
-
   private var activationHint: String {
     switch draft.dictationActivationMode {
     case .hold:
@@ -336,12 +309,8 @@ struct GeneralSettingsPane: View {
   }
 
   private var providerFooter: String {
-    switch draft.llmProvider {
-    case .chatGPTSubscription:
-      "Uses the ChatGPT sign-in Codex stored on this Mac. MicAI reads it and never copies it."
-    case .openAIAPIKey:
-      "Billed to your OpenAI platform account. The key stays in your Keychain."
-    }
+    "AI features run through the Codex CLI you are signed in to. MicAI never reads its "
+      + "credentials. Leave the model blank to use your Codex default."
   }
 
   static let dictationHotkeys: [Hotkey] = [.rightOption, .controlOptionSpace, .commandShiftSpace]

@@ -168,6 +168,7 @@ Work:
 - Implement `SystemPasteboardAdapter` that snapshots all item type/data pairs and change count.
 - Implement Cmd+C/Cmd+V synthesis with `CGEvent`.
 - Implement selection capture, target process capture/revalidation, and delayed conditional clipboard restore.
+- Prefer direct Accessibility selected-text insertion and fall back to the guarded clipboard transaction only when the target rejects direct insertion.
 - Add exhaustive tests using injected pasteboard and keyboard ports, including a concurrent external clipboard change.
 - Wire dictation output to insertion only when the operation and target are still current.
 
@@ -197,35 +198,26 @@ Manual gate: in TextEdit, dictate through hold and toggle modes; verify rich/mul
 
 Runnable result: local dictation works end to end in any compatible focused text field.
 
-## Milestone 6 — ChatGPT-subscription SSE client and AI Commands
+## Milestone 6 — ChatGPT-subscription Codex CLI client and AI Commands
 
-Goal: transform a selection or draft text in place using the verified Codex 0.144.6 HTTP contract.
+Goal: transform a selection or draft text through the signed-in Codex CLI without handling OAuth credentials.
 
 Work:
 
-- Implement strict read-only decoding of `~/.codex/auth.json` for `tokens.access_token` and `tokens.account_id`.
-- Implement the exact HTTP endpoint, verified headers, canonical request fields, and SSE parser from `SPEC.md`.
-- Accumulate output deltas and require `response.completed`; discard failed, incomplete, empty, or cancelled output.
-- On 401, reload credentials and retry once only.
-- Build command payloads with separately JSON-encoded instruction and selected text.
+- Locate the installed Codex CLI without shell expansion and allow an explicit `MICAI_CODEX_BIN` override.
+- Invoke `codex exec` with `--ephemeral`, read-only sandboxing, an isolated temporary directory, and stdin payloads.
+- Build command payloads with separately JSON-encoded instruction and selected text; keep user content out of process arguments.
+- Leave the model override blank to use the Codex subscription default.
+- Discard failed, empty, timed-out, or cancelled output and terminate the child process on cancellation.
 - Route selection to replacement and no selection to insertion.
-- Add an environment-only `OPENAI_API_KEY` fallback adapter, but leave activation explicit until the ChatGPT route is proven incompatible.
-- Test entirely with fake credentials and an injected HTTP transport.
+- Test with an injected process runner; use one synthetic real subscription smoke test for runtime proof.
 
 Files:
 
-- `Sources/MicAICore/Auth/CodexAuthFileLoader.swift`
-- `Sources/MicAICore/Auth/ChatGPTCredential.swift`
-- `Sources/MicAICore/LLM/ChatGPTResponsesClient.swift`
-- `Sources/MicAICore/LLM/ResponsesRequest.swift`
-- `Sources/MicAICore/LLM/SSEParser.swift`
-- `Sources/MicAICore/LLM/OpenAIAPIKeyClient.swift`
+- `Sources/MicAICore/LLM/CodexCLIClient.swift`
 - `Sources/MicAICore/Command/CommandEngine.swift`
 - `Sources/MicAICore/Operation/CommandPipeline.swift`
-- `Tests/MicAICoreTests/CodexAuthFileLoaderTests.swift`
-- `Tests/MicAICoreTests/ResponsesRequestTests.swift`
-- `Tests/MicAICoreTests/SSEParserTests.swift`
-- `Tests/MicAICoreTests/ChatGPTResponsesClientTests.swift`
+- `Tests/MicAICoreTests/CodexCLIClientTests.swift`
 - `Tests/MicAICoreTests/CommandEngineTests.swift`
 
 Verification:
@@ -237,9 +229,9 @@ bash scripts/codex-build.sh
 bash scripts/codex-run.sh
 ```
 
-Manual gate: with explicit approval to use the real subscription route, select `hello` in TextEdit, speak `make this uppercase`, verify `HELLO` replaces it, then verify an empty-selection draft. Inspect logs and git status for absence of secrets.
+Manual gate: confirm `codex login status` reports ChatGPT, then select `hello` in TextEdit, speak `make this uppercase`, verify `HELLO` replaces it, and verify an empty-selection draft. Inspect logs and git status for absence of secrets.
 
-Runnable result: both P0 AI Command paths work end to end or the route is classified with a concrete backend incompatibility and the environment fallback can be selected.
+Runnable result: both P0 AI Command paths work end to end through the supported Codex CLI surface.
 
 ## Milestone 7 — Complete menu bar UX, HUD, onboarding, Settings, and launch at login
 
@@ -264,8 +256,9 @@ Files:
 - `Sources/MicAI/Views/PermissionStatusView.swift`
 - `Sources/MicAI/HUD/RecordingHUDController.swift`
 - `Sources/MicAI/HUD/RecordingHUDView.swift`
-- `Sources/MicAI/LaunchAtLogin/LaunchAtLoginService.swift`
-- `Tests/MicAICoreTests/StatusProjectionTests.swift`
+- `Sources/MicAI/Settings/LaunchAtLoginService.swift`
+- `Sources/MicAI/Views/HotkeyRecorderField.swift`, `Sources/MicAICore/Hotkeys/HotkeyCapture.swift`
+- `Tests/MicAICoreTests/AppReadinessTests.swift` (the four-way status projection is `AppReadiness`), `Tests/MicAICoreTests/HotkeyCaptureTests.swift`
 
 Verification:
 
@@ -288,7 +281,7 @@ Goal: make the prototype dependable enough for the final acceptance run.
 
 Work:
 
-- Exercise permission denial/recovery, model offline/failure, missing/malformed auth, 401 retry, 403/429/5xx, broken SSE, focus changes, hotkey conflicts, and cancellation races.
+- Exercise permission denial/recovery, model offline/failure, missing/signed-out Codex CLI, nonzero child exit, timeout, focus changes, hotkey conflicts, and cancellation races.
 - Measure capture-to-ASR and release-to-insertion timing locally.
 - Warm the loaded ASR manager and remove avoidable main-thread work until the 10-second utterance target is met.
 - Audit source, fixtures, logs, app bundle, and git status for credentials, audio, and build artifacts.
@@ -297,7 +290,7 @@ Work:
 Files:
 
 - `Sources/MicAICore/Diagnostics/LocalMetrics.swift`
-- `Sources/MicAI/Diagnostics/RedactedLogger.swift`
+- `Sources/MicAI/Diagnostics/MicAITelemetry.swift` (redacted OSLog: modes, phases, error codes, durations only)
 - Existing implementation files as targeted fixes require
 - Existing `Tests/MicAICoreTests/*` as coverage requires
 
@@ -330,9 +323,9 @@ Files:
 | 1. Clean-clone build produces `dist/MicAI.app` | In a clean checkout with network: `bash scripts/codex-build.sh`, `test -d dist/MicAI.app`, `codesign --verify --deep --strict dist/MicAI.app` | Command outputs, resolved dependency version, bundle tree, signature verification |
 | 2. Launch shows menu icon and onboarding requests/explains permissions | `bash scripts/codex-run.sh`; complete first-run flow from not-determined microphone state and untrusted Accessibility state where practical | Menu/no-Dock observation plus each onboarding state recorded |
 | 3. Hold dictation inserts a 10-second utterance in about two seconds | In TextEdit, hold Right Option, speak the fixed 10-second phrase, release, compare text, record release-to-insertion time; repeat five times | Five outputs and timings; median and worst case |
-| 4. Selected-text uppercase command replaces via ChatGPT OAuth | Select `hello`, invoke command hotkey, speak `make this uppercase`, verify `HELLO`; confirm provider reports ChatGPT credential path without exposing it | Five replacements, HTTP status/event completion diagnostics with all sensitive fields redacted |
+| 4. Selected-text uppercase command replaces through ChatGPT subscription | Select `hello`, invoke command hotkey, speak `make this uppercase`, verify `HELLO`; confirm provider reports signed-in Codex CLI | Five replacements plus child-process success classification with no credential output |
 | 5. Esc cancels without insertion | Cancel once during recording, ASR, and LLM wait | Target text and clipboard unchanged after each case |
-| 6. MicAICore unit tests are green for routing, auth parsing, and clipboard restore | `bash scripts/codex-test.sh` | Green test report naming the required suites |
+| 6. MicAICore unit tests are green for routing, CLI invocation, and adaptive insertion | `bash scripts/codex-test.sh` | Green test report naming the required suites |
 | 7. No secrets or build artifacts are tracked | `git status --short` plus a secret-name-only scan of tracked files; verify `dist/` and `.build/` are ignored | No credential values; `git check-ignore dist .build` succeeds; only intended source/docs changes appear |
 
 Final command gate:

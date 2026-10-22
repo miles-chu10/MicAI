@@ -4,6 +4,8 @@ public struct SSEParser: Sendable {
   private var buffer = Data()
   private var output = ""
   private var completed = false
+  public private(set) var usage = LLMUsage()
+  public private(set) var responseModel: String?
 
   public init() {}
 
@@ -93,6 +95,8 @@ public struct SSEParser: Sendable {
       output += delta
     case "response.completed":
       completed = true
+      usage = event.response?.usage ?? LLMUsage()
+      responseModel = event.response?.model
     case "response.failed", "response.incomplete", "error":
       throw MicAIError.llmIncomplete
     default:
@@ -104,4 +108,31 @@ public struct SSEParser: Sendable {
 private struct Event: Decodable {
   let type: String
   let delta: String?
+  let response: Response?
+
+  struct Response: Decodable {
+    let model: String?
+    let usage: LLMUsage?
+
+    init(from decoder: Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      model = try? container.decode(String.self, forKey: .model)
+      usage = try? container.decode(LLMUsage.self, forKey: .usage)
+    }
+
+    enum CodingKeys: String, CodingKey {
+      case model, usage
+    }
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    type = try container.decode(String.self, forKey: .type)
+    delta = try container.decodeIfPresent(String.self, forKey: .delta)
+    response = try? container.decode(Response.self, forKey: .response)
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case type, delta, response
+  }
 }

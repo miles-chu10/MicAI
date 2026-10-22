@@ -2,10 +2,16 @@ import Foundation
 
 public struct CommandResult: Sendable, Equatable {
   public let instruction: Transcript
+  public let sourceText: String?
   public let intent: InsertionIntent
 
-  public init(instruction: Transcript, intent: InsertionIntent) {
+  public init(
+    instruction: Transcript,
+    sourceText: String? = nil,
+    intent: InsertionIntent
+  ) {
     self.instruction = instruction
+    self.sourceText = sourceText
     self.intent = intent
   }
 }
@@ -13,6 +19,7 @@ public struct CommandResult: Sendable, Equatable {
 public actor CommandPipeline {
   private struct Context: Sendable {
     let selectedText: String?
+    let model: String
   }
 
   private let dictationPipeline: DictationPipeline
@@ -40,7 +47,9 @@ public actor CommandPipeline {
   public func begin(
     mode: MicAIMode = .command,
     target: TargetIdentity,
+    model: String,
     levels: @escaping @Sendable (Float) -> Void,
+    maximumDurationReached: @escaping @Sendable () -> Void = {},
     operationStarted: @escaping @Sendable (UUID) async -> Void = { _ in },
     partials: (@Sendable (String) -> Void)? = nil
   ) async throws -> UUID {
@@ -48,6 +57,7 @@ public actor CommandPipeline {
       mode: mode,
       target: target,
       levels: levels,
+      maximumDurationReached: maximumDurationReached,
       operationStarted: operationStarted,
       partials: partials
     )
@@ -57,7 +67,7 @@ public actor CommandPipeline {
       guard await coordinator.isCurrent(operationID: operationID) else {
         throw MicAIError.cancelled
       }
-      contexts[operationID] = Context(selectedText: selectedText)
+      contexts[operationID] = Context(selectedText: selectedText, model: model)
       return operationID
     } catch {
       await dictationPipeline.cancel(operationID: operationID)
@@ -67,10 +77,13 @@ public actor CommandPipeline {
 
   public func finish(
     operationID: UUID,
-    model: String,
     awaitingLLM: @escaping @Sendable () async -> Void = {}
   ) async throws -> CommandResult {
     let commandEngine = self.commandEngine
+    // The model is snapshotted at `begin`, so a Settings edit mid-operation
+    // cannot change which model answers it.
+    let context = contexts[operationID]
+    let model = context?.model ?? ""
     let produced = try await finish(
       operationID: operationID,
       awaitingLLM: awaitingLLM
@@ -78,10 +91,15 @@ public actor CommandPipeline {
       try await commandEngine.execute(
         instruction: spokenText,
         selectedText: selectedText,
-        model: model
+        model: model,
+        requestID: operationID
       )
     }
-    return CommandResult(instruction: produced.instruction, intent: produced.value)
+    return CommandResult(
+      instruction: produced.instruction,
+      sourceText: context?.selectedText,
+      intent: produced.value
+    )
   }
 
   /// Runs the transcript and captured selection through `produce`, under the

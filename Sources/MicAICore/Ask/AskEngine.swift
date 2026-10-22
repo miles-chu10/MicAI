@@ -63,9 +63,6 @@ public struct AskEngine: Sendable {
     guard !trimmedQuestion.isEmpty else {
       throw MicAIError.asrFailed
     }
-    guard !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      throw MicAIError.llmServerFailure
-    }
 
     let context = selectedText?.isEmpty == false ? selectedText : nil
     let output = try await transformer.transform(

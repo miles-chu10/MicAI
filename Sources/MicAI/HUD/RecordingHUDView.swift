@@ -128,6 +128,8 @@ struct RecordingHUDView: View {
       model.polishesOnDevice && model.mode == .dictation ? "laptopcomputer" : "cloud.fill"
     case .inserting:
       "checkmark"
+    case .failed(.cancelled):
+      "xmark"
     case .failed:
       "exclamationmark.triangle.fill"
     case .idle:
@@ -141,6 +143,8 @@ struct RecordingHUDView: View {
       model.mode.hudTint
     case .inserting:
       .green
+    case .failed(.cancelled):
+      .secondary
     case .failed:
       .red
     case .transcribing, .awaitingLLM, .idle:
@@ -182,7 +186,10 @@ struct RecordingHUDView: View {
   }
 
   private var failureTitle: String {
-    model.message == nil ? "Something went wrong" : "Couldn’t finish"
+    if model.phase == .failed(.cancelled) {
+      return "Cancelled"
+    }
+    return model.message == nil ? "Something went wrong" : "Couldn’t finish"
   }
 
   /// Escape cancels up to the moment of pasting. Showing the hint once

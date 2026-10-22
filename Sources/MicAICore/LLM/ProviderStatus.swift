@@ -9,11 +9,11 @@ public enum ProviderStatus: Sendable, Equatable {
   public var summary: String {
     switch self {
     case .notConfigured:
-      "Configure a command hotkey and model."
+      "Choose a command hotkey to enable ChatGPT Command Mode."
     case .readyToAttempt:
-      "Codex credential will be checked when a command runs."
+      "Uses your signed-in Codex CLI and ChatGPT subscription."
     case .retryingCredential:
-      "Reloading the Codex credential after authorization failed."
+      "Retrying after the Codex CLI authorization failed."
     case .failed(let error):
       error.localizedDescription
     }

@@ -12,6 +12,9 @@ struct AppSettingsTests {
     #expect(settings.dictationActivationMode == .hold)
     #expect(settings.commandHotkey == nil)
     #expect(settings.llmModel == "")
+    #expect(settings.dictationProvider == .parakeet)
+    #expect(settings.openAITranscriptionModel == "gpt-transcribe")
+    #expect(settings.openAITranscriptionFallbackEnabled)
   }
 
   @Test
@@ -24,6 +27,51 @@ struct AppSettingsTests {
     )
 
     #expect(try settings.validated().llmModel == "gpt-test")
+  }
+
+  @Test(arguments: [
+    "gpt-transcribe", " gpt-live-transcribe ", "gpt-4o-transcribe",
+    "gpt-4o-mini-transcribe-2025-12-15", "gpt-4o-transcribe-diarize", "whisper-1",
+  ])
+  func audioOnlyOverridesMigrateWithoutResettingOtherSettings(_ model: String) throws {
+    var original = AppSettings.defaults
+    original.llmModel = model
+    original.dictationHotkey = .controlOptionSpace
+    original.dictationActivationMode = .toggle
+    original.commandHotkey = .commandShiftSpace
+    original.translateHotkey = .controlOptionT
+    original.askHotkey = .controlOptionA
+    original.translationTargetLanguage = "Spanish"
+    original.historyEnabled = false
+    original.historyLimit = 37
+    original.defaultTone = .professional
+    original.styleOverrides = ["synthetic.app": .technical]
+    original.dictationProvider = .openAI
+    original.openAITranscriptionModel = "gpt-transcribe"
+    original.openAITranscriptionFallbackEnabled = false
+    let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(original))
+    original.llmModel = ""
+    #expect(try decoded.validated() == original)
+    let persisted = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(decoded))
+    #expect(persisted == original)
+  }
+
+  @Test
+  func freshAudioOnlyTextOverrideIsRejectedWithoutChangingTheDraft() {
+    var settings = AppSettings.defaults
+    settings.llmModel = " gpt-transcribe "
+    #expect(throws: AppSettingsValidationError.transcriptionOnlyTextModel) {
+      try settings.validated()
+    }
+    #expect(settings.llmModel == " gpt-transcribe ")
+  }
+
+  @Test
+  func arbitraryUnknownModelIsPreservedForCodexValidation() throws {
+    var settings = AppSettings.defaults
+    settings.llmModel = "custom-text-model"
+    let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+    #expect(try decoded.validated().llmModel == "custom-text-model")
   }
 
   @Test
@@ -39,7 +87,7 @@ struct AppSettingsTests {
   }
 
   @Test
-  func validationRejectsEmptyModelWhenCommandsAreEnabled() {
+  func validationAllowsSubscriptionDefaultWhenCommandsAreEnabled() throws {
     let settings = AppSettings(
       dictationHotkey: .rightOption,
       commandHotkey: .controlOptionSpace,
@@ -47,12 +95,65 @@ struct AppSettingsTests {
       llmModel: " \n "
     )
 
-    do {
-      _ = try settings.validated()
-      Issue.record("Expected validation to reject an empty model")
-    } catch {
-      #expect(error as? AppSettingsValidationError == .emptyModel)
+    #expect(try settings.validated().llmModel == "")
+  }
+
+  @Test
+  func openAITranscriptionModelTrimsAndAllowsCustomIDs() throws {
+    let settings = AppSettings(
+      dictationHotkey: .rightOption,
+      commandHotkey: nil,
+      dictationActivationMode: .hold,
+      llmModel: "",
+      dictationProvider: .openAI,
+      openAITranscriptionModel: "  custom-transcriber-v2  ",
+      openAITranscriptionFallbackEnabled: false
+    )
+
+    let validated = try settings.validated()
+    #expect(validated.openAITranscriptionModel == "custom-transcriber-v2")
+    #expect(validated.dictationTranscriptionRequest.model == "custom-transcriber-v2")
+    #expect(!validated.dictationTranscriptionRequest.fallbackToParakeet)
+  }
+
+  @Test
+  func validationRejectsEmptyOpenAITranscriptionModel() {
+    let settings = AppSettings(
+      dictationHotkey: .rightOption,
+      commandHotkey: nil,
+      dictationActivationMode: .hold,
+      llmModel: "",
+      dictationProvider: .openAI,
+      openAITranscriptionModel: " \n "
+    )
+
+    #expect(throws: AppSettingsValidationError.emptyOpenAITranscriptionModel) {
+      try settings.validated()
     }
+  }
+
+  @Test
+  func legacySettingsDecodeToParakeetWithoutResettingExistingValues() throws {
+    let legacy = """
+      {
+        "dictationHotkey": {"keyCode": 49, "modifiers": ["control", "option"]},
+        "commandHotkey": null,
+        "dictationActivationMode": "toggle",
+        "llmModel": "legacy-command-model"
+      }
+      """
+
+    let decoded = try JSONDecoder().decode(
+      AppSettings.self,
+      from: Data(legacy.utf8)
+    )
+
+    #expect(decoded.dictationHotkey == .controlOptionSpace)
+    #expect(decoded.dictationActivationMode == .toggle)
+    #expect(decoded.llmModel == "legacy-command-model")
+    #expect(decoded.dictationProvider == .parakeet)
+    #expect(decoded.openAITranscriptionModel == "gpt-transcribe")
+    #expect(decoded.openAITranscriptionFallbackEnabled)
   }
 
   @Test
@@ -102,7 +203,10 @@ struct AppSettingsTests {
       dictationHotkey: .rightOption,
       commandHotkey: Hotkey(keyCode: 49, modifiers: [.command]),
       dictationActivationMode: .toggle,
-      llmModel: "gpt-test"
+      llmModel: "gpt-test",
+      dictationProvider: .openAI,
+      openAITranscriptionModel: "custom-transcriber",
+      openAITranscriptionFallbackEnabled: false
     )
 
     let data = try JSONEncoder().encode(settings)
@@ -118,6 +222,7 @@ struct AppSettingsTests {
           "dictationActivationMode",
           "llmModel",
           "refinementEnabled",
+          "cloudCleanupConsented",
           "privacyMode",
           "historyEnabled",
           "historyLimit",
@@ -125,7 +230,9 @@ struct AppSettingsTests {
           "styleOverrides",
           "translationTargetLanguage",
           "askAlwaysOpensWindow",
-          "llmProvider",
+          "dictationProvider",
+          "openAITranscriptionModel",
+          "openAITranscriptionFallbackEnabled",
           "speechModel",
           "customInstructions",
           "soundFeedback",
@@ -134,6 +241,9 @@ struct AppSettingsTests {
           "customModes",
         ]
     )
+    let serializedKeys = object.keys.map { $0.lowercased() }
+    #expect(!serializedKeys.contains { $0.contains("apikey") })
+    #expect(!serializedKeys.contains { $0.contains("credential") })
     #expect(try JSONDecoder().decode(AppSettings.self, from: data) == settings)
   }
 }
@@ -158,7 +268,8 @@ struct AppSettingsCompatibilityTests {
 
     #expect(settings.dictationHotkey == .rightOption)
     #expect(settings.llmModel == "gpt-5-codex")
-    #expect(settings.refinementEnabled)
+    // Clean-up was never chosen, so it stays off and dictation stays local.
+    #expect(!settings.refinementEnabled)
     #expect(!settings.privacyMode)
     #expect(settings.historyEnabled)
     #expect(settings.defaultTone == .neutral)
@@ -183,14 +294,16 @@ struct AppSettingsCompatibilityTests {
   }
 
   @Test
-  func refinementIsInactiveWithoutAModel() {
+  func refinementRunsWithTheSubscriptionDefaultModelOnceConsented() {
     var settings = AppSettings.defaults
     settings.refinementEnabled = true
-
     #expect(!settings.isRefinementActive)
 
-    settings.llmModel = "gpt-5-codex"
+    settings.cloudCleanupConsented = true
     #expect(settings.isRefinementActive)
+
+    settings.privacyMode = true
+    #expect(!settings.isRefinementActive)
   }
 
   @Test
@@ -198,6 +311,8 @@ struct AppSettingsCompatibilityTests {
     var settings = AppSettings.defaults
     settings.llmModel = "gpt-5-codex"
     settings.commandHotkey = .controlOptionSpace
+    settings.refinementEnabled = true
+    settings.cloudCleanupConsented = true
     settings.privacyMode = true
 
     #expect(!settings.isRefinementActive)
@@ -234,11 +349,13 @@ struct AppSettingsCompatibilityTests {
     #expect(throws: AppSettingsValidationError.self) { try settings.validated() }
     let saved = try settings.validated(waivingModelRequirements: true)
 
+    // A blank model is the Codex default, so only the mode missing its
+    // language stays off.
     #expect(!saved.privacyMode)
     #expect(saved.commandHotkey == .controlOptionSpace)
-    #expect(!saved.areCommandsActive)
+    #expect(saved.areCommandsActive)
     #expect(!saved.isTranslateActive)
-    #expect(!saved.isAskActive)
+    #expect(saved.isAskActive)
   }
 
   @Test
@@ -318,13 +435,11 @@ struct TranslateAndAskSettingsTests {
   }
 
   @Test
-  func askOrTranslateWithoutAModelIsRejected() {
+  func askWithoutAModelUsesTheSubscriptionDefault() throws {
     var settings = AppSettings.defaults
     settings.askHotkey = .controlOptionA
 
-    #expect(throws: AppSettingsValidationError.emptyModel) {
-      try settings.validated()
-    }
+    #expect(try settings.validated().llmModel == "")
   }
 
   @Test
@@ -433,7 +548,6 @@ struct FeatureSettingsCompatibilityTests {
       """
     let settings = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
 
-    #expect(settings.llmProvider == .chatGPTSubscription)
     #expect(settings.speechModel == .english)
     #expect(settings.customInstructions.isEmpty)
     #expect(settings.soundFeedback)
@@ -445,6 +559,7 @@ struct FeatureSettingsCompatibilityTests {
   @Test
   func onDeviceCleanUpRunsInPrivacyModeAndWithoutAModel() {
     var settings = AppSettings.defaults
+    settings.refinementEnabled = true
     settings.cleanupEngine = .onDevice
     settings.privacyMode = true
     #expect(settings.llmModel.isEmpty)
@@ -455,11 +570,12 @@ struct FeatureSettingsCompatibilityTests {
   }
 
   @Test
-  func languageModelCleanUpStillNeedsAModelAndNoPrivacyMode() {
+  func languageModelCleanUpUsesTheCodexDefaultButNotInPrivacyMode() {
     var settings = AppSettings.defaults
-    #expect(settings.refinementRoute == nil)
-
-    settings.llmModel = "gpt-test"
+    settings.refinementEnabled = true
+    settings.cloudCleanupConsented = true
+    settings.cleanupEngine = .languageModel
+    #expect(settings.llmModel.isEmpty)
     #expect(settings.refinementRoute == .languageModel)
 
     settings.privacyMode = true
@@ -488,5 +604,57 @@ struct FeatureSettingsCompatibilityTests {
     #expect(Hotkey.rightOption.keyCaps == ["Right ⌥"])
     #expect(Hotkey.controlOptionSpace.keyCaps == ["⌃", "⌥", "Space"])
     #expect(Hotkey.commandShiftSpace.keyCaps == ["⇧", "⌘", "Space"])
+  }
+}
+
+@Suite
+struct CloudCleanupConsentTests {
+  @Test
+  func newInstallsKeepDictationOnThisMac() {
+    let settings = AppSettings.defaults
+    #expect(!settings.refinementEnabled)
+    #expect(!settings.cloudCleanupConsented)
+    #expect(settings.refinementRoute == nil)
+  }
+
+  @Test
+  func olderSettingsKeepTheirChoiceButPauseCloudCleanUpUntilConfirmed() throws {
+    let legacy = """
+      {
+        "dictationHotkey": { "keyCode": 61, "modifiers": [] },
+        "dictationActivationMode": "hold",
+        "llmModel": "",
+        "refinementEnabled": true
+      }
+      """
+    var settings = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
+
+    #expect(settings.refinementEnabled)
+    #expect(!settings.cloudCleanupConsented)
+    #expect(settings.refinementRoute == nil)
+
+    settings.cloudCleanupConsented = true
+    #expect(settings.refinementRoute == .languageModel)
+  }
+
+  @Test
+  func onDeviceCleanUpNeedsNoCloudConsent() {
+    var settings = AppSettings.defaults
+    settings.refinementEnabled = true
+    settings.cleanupEngine = .onDevice
+    #expect(settings.refinementRoute == .onDevice)
+  }
+
+  @Test
+  func consentSurvivesARoundTrip() throws {
+    var settings = AppSettings.defaults
+    settings.refinementEnabled = true
+    settings.cloudCleanupConsented = true
+    let decoded = try JSONDecoder().decode(
+      AppSettings.self,
+      from: JSONEncoder().encode(settings)
+    )
+    #expect(decoded.cloudCleanupConsented)
+    #expect(decoded.refinementRoute == .languageModel)
   }
 }

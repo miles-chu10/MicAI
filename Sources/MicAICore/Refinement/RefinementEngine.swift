@@ -93,13 +93,6 @@ public struct RefinementEngine: TranscriptRefining, Sendable {
     guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       return RefinementOutcome(text: transcript, refined: false)
     }
-    guard !request.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      return RefinementOutcome(
-        text: transcript,
-        refined: false,
-        failure: .llmServerFailure
-      )
-    }
 
     do {
       let output = try await transformer.transform(

@@ -38,49 +38,65 @@ public actor ChatGPTResponsesClient: LLMTransforming {
   private let credentialLoader: any CredentialLoading
   private let transport: any ResponsesHTTPTransport
   private let requestTimeout: TimeInterval
-  private let statusHandler: @Sendable (ProviderStatus) -> Void
+  private let statusHandler: @Sendable (UUID, ProviderStatus) -> Void
+  private let usageHandler: @Sendable (LLMUsageReport) -> Void
   private var cachedCredential: ChatGPTCredential?
 
   public init(
     credentialLoader: any CredentialLoading = CodexAuthFileLoader(),
     transport: any ResponsesHTTPTransport = URLSessionResponsesTransport(),
     requestTimeout: TimeInterval = ChatGPTResponsesClient.defaultRequestTimeout,
-    statusHandler: @escaping @Sendable (ProviderStatus) -> Void = { _ in }
+    statusHandler: @escaping @Sendable (ProviderStatus) -> Void = { _ in },
+    usageHandler: @escaping @Sendable (LLMUsageReport) -> Void = { _ in }
   ) {
     self.credentialLoader = credentialLoader
     self.transport = transport
     self.requestTimeout = requestTimeout
-    self.statusHandler = statusHandler
+    self.statusHandler = { _, status in
+      statusHandler(status)
+    }
+    self.usageHandler = usageHandler
+  }
+
+  public init(
+    credentialLoader: any CredentialLoading = CodexAuthFileLoader(),
+    transport: any ResponsesHTTPTransport = URLSessionResponsesTransport(),
+    requestTimeout: TimeInterval = ChatGPTResponsesClient.defaultRequestTimeout,
+    scopedStatusHandler: @escaping @Sendable (UUID, ProviderStatus) -> Void,
+    usageHandler: @escaping @Sendable (LLMUsageReport) -> Void = { _ in }
+  ) {
+    self.credentialLoader = credentialLoader
+    self.transport = transport
+    self.requestTimeout = requestTimeout
+    self.statusHandler = scopedStatusHandler
+    self.usageHandler = usageHandler
   }
 
   public func transform(_ request: LLMRequest) async throws -> String {
     do {
       try Task.checkCancellation()
+      let started = ContinuousClock.now
       let credential = try currentCredential()
       let firstResponse = try await perform(request, credential: credential)
 
       guard firstResponse.statusCode == 401 else {
-        let output = try await parse(firstResponse)
-        statusHandler(.readyToAttempt)
-        return output
+        return complete(try await parse(firstResponse), request: request, started: started)
       }
 
-      statusHandler(.retryingCredential)
+      statusHandler(request.sessionID, .retryingCredential)
       cachedCredential = nil
       let reloadedCredential = try loadCredential()
       let retryResponse = try await perform(request, credential: reloadedCredential)
       guard retryResponse.statusCode != 401 else {
         throw MicAIError.llmUnauthorized
       }
-      let output = try await parse(retryResponse)
-      statusHandler(.readyToAttempt)
-      return output
+      return complete(try await parse(retryResponse), request: request, started: started)
     } catch is CancellationError {
       let error = MicAIError.cancelled
-      statusHandler(.failed(error))
+      statusHandler(request.sessionID, .failed(error))
       throw error
     } catch let error as MicAIError {
-      statusHandler(.failed(error))
+      statusHandler(request.sessionID, .failed(error))
       throw error
     }
   }
@@ -145,7 +161,29 @@ public actor ChatGPTResponsesClient: LLMTransforming {
     return urlRequest
   }
 
-  private func parse(_ response: ResponsesHTTPResponse) async throws -> String {
+  private func complete(
+    _ result: (text: String, usage: LLMUsage, model: String?),
+    request: LLMRequest,
+    started: ContinuousClock.Instant
+  ) -> String {
+    let model = request.model.trimmingCharacters(in: .whitespacesAndNewlines)
+    usageHandler(
+      LLMUsageReport(
+        route: .chatGPTResponses,
+        task: request.kind,
+        requestedModel: model.isEmpty ? nil : model,
+        responseModel: result.model,
+        usage: result.usage,
+        duration: ContinuousClock.now - started
+      )
+    )
+    statusHandler(request.sessionID, .readyToAttempt)
+    return result.text
+  }
+
+  private func parse(_ response: ResponsesHTTPResponse) async throws -> (
+    text: String, usage: LLMUsage, model: String?
+  ) {
     switch response.statusCode {
     case 200..<300:
       var parser = SSEParser()
@@ -155,7 +193,8 @@ public actor ChatGPTResponsesClient: LLMTransforming {
           try parser.append(chunk)
         }
         try Task.checkCancellation()
-        return try parser.finish()
+        let text = try parser.finish()
+        return (text, parser.usage, parser.responseModel)
       } catch is CancellationError {
         throw CancellationError()
       } catch let error as URLError

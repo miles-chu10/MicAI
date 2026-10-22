@@ -108,15 +108,14 @@ struct CustomModeSettingsTests {
   }
 
   @Test
-  func aCustomModeWithAShortcutNeedsAModel() {
+  func aCustomModeWithABlankModelUsesTheCodexDefault() throws {
     var settings = AppSettings.defaults
+    settings.llmModel = ""
     settings.customModes = [
       CustomMode(name: "Mine", instructions: "Do it.", hotkey: .controlOptionSpace)
     ]
 
-    #expect(throws: AppSettingsValidationError.emptyModel) {
-      try settings.validated()
-    }
+    #expect(try settings.validated().llmModel.isEmpty)
   }
 
   @Test

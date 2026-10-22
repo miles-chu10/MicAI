@@ -20,27 +20,9 @@ public enum DictationActivationMode: String, Codable, CaseIterable, Sendable {
   }
 }
 
-/// Which service does the language work: clean-up, commands, translation and
-/// answers. Speech recognition is always on-device regardless.
-public enum LLMProvider: String, Codable, CaseIterable, Sendable {
-  /// The ChatGPT sign-in Codex already stored on this Mac.
-  case chatGPTSubscription
-  /// An OpenAI platform API key, kept in the macOS Keychain.
-  case openAIAPIKey
-
-  public var displayName: String {
-    switch self {
-    case .chatGPTSubscription:
-      "ChatGPT subscription"
-    case .openAIAPIKey:
-      "OpenAI API key"
-    }
-  }
-}
-
 /// Where dictation clean-up runs.
 public enum CleanupEngine: String, Codable, CaseIterable, Sendable {
-  /// The provider chosen for the AI modes: ChatGPT or an OpenAI API key.
+  /// ChatGPT through the Codex CLI, the same route as the AI modes.
   case languageModel
   /// Apple's on-device model (Apple Intelligence, macOS 26 or later). The
   /// transcript never leaves the Mac, so it keeps working in privacy mode.
@@ -120,68 +102,17 @@ public struct Hotkey: Codable, Hashable, Sendable {
   /// as on a US ANSI keyboard, which is how macOS itself names shortcut keys in
   /// most places. Anything unlisted falls back to its number.
   static let keyNames: [UInt16: String] = [
-    0: "A",
-    1: "S",
-    2: "D",
-    3: "F",
-    4: "H",
-    5: "G",
-    6: "Z",
-    7: "X",
-    8: "C",
-    9: "V",
-    11: "B",
-    12: "Q",
-    13: "W",
-    14: "E",
-    15: "R",
-    16: "Y",
-    17: "T",
-    18: "1",
-    19: "2",
-    20: "3",
-    21: "4",
-    22: "6",
-    23: "5",
-    24: "=",
-    25: "9",
-    26: "7",
-    27: "-",
-    28: "8",
-    29: "0",
-    30: "]",
-    31: "O",
-    32: "U",
-    33: "[",
-    34: "I",
-    35: "P",
-    36: "Return",
-    37: "L",
-    38: "J",
-    39: "'",
-    40: "K",
-    41: ";",
-    42: "\\",
-    43: ",",
-    44: "/",
-    45: "N",
-    46: "M",
-    47: ".",
-    48: "Tab",
-    49: "Space",
-    50: "`",
-    96: "F5",
-    97: "F6",
-    98: "F7",
-    99: "F3",
-    100: "F8",
-    101: "F9",
-    103: "F11",
-    109: "F10",
-    111: "F12",
-    118: "F4",
-    120: "F2",
-    122: "F1",
+    0: "A", 11: "B", 8: "C", 2: "D", 14: "E", 3: "F", 5: "G", 4: "H", 34: "I",
+    38: "J", 40: "K", 37: "L", 46: "M", 45: "N", 31: "O", 35: "P", 12: "Q",
+    15: "R", 1: "S", 17: "T", 32: "U", 9: "V", 13: "W", 7: "X", 16: "Y", 6: "Z",
+    29: "0", 18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7",
+    28: "8", 25: "9",
+    49: "Space", 36: "Return", 48: "Tab", 51: "Delete",
+    27: "-", 24: "=", 33: "[", 30: "]", 41: ";", 39: "'", 43: ",", 47: ".",
+    44: "/", 42: "\\", 50: "`",
+    122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6", 98: "F7",
+    100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12",
+    123: "←", 124: "→", 125: "↓", 126: "↑",
   ]
 
   /// Keys a recorded shortcut may not use: Escape cancels every operation, and
@@ -236,24 +167,28 @@ public struct Hotkey: Codable, Hashable, Sendable {
 }
 
 public enum AppSettingsValidationError: Error, Equatable, Sendable {
-  case emptyModel
+  case emptyOpenAITranscriptionModel
   case duplicateHotkeys
   case unusableHotkey
   case emptyTargetLanguage
+  case transcriptionOnlyTextModel
   case incompleteCustomMode
 }
 
 extension AppSettingsValidationError: LocalizedError {
   public var errorDescription: String? {
     switch self {
-    case .emptyModel:
-      "Enter an LLM model."
+    case .emptyOpenAITranscriptionModel:
+      "Enter an OpenAI transcription model."
     case .duplicateHotkeys:
       "Each mode needs its own shortcut."
     case .unusableHotkey:
       "Choose a supported hotkey with modifiers."
     case .emptyTargetLanguage:
       "Enter a language to translate into."
+    case .transcriptionOnlyTextModel:
+      "Choose a text model for AI tasks, or leave the override blank to use your Codex default. "
+        + "Transcription models belong in the audio settings."
     case .incompleteCustomMode:
       "Give each custom mode a name and instructions."
     }
@@ -265,17 +200,29 @@ public struct AppSettings: Codable, Equatable, Sendable {
     dictationHotkey: .rightOption,
     commandHotkey: nil,
     dictationActivationMode: .hold,
-    llmModel: ""
+    llmModel: "",
+    dictationProvider: .parakeet,
+    openAITranscriptionModel: SpeechTranscriptionRequest.defaultOpenAIModel,
+    openAITranscriptionFallbackEnabled: true
   )
 
   public var dictationHotkey: Hotkey
   public var commandHotkey: Hotkey?
   public var dictationActivationMode: DictationActivationMode
   public var llmModel: String
+  public var dictationProvider: DictationProvider
+  public var openAITranscriptionModel: String
+  public var openAITranscriptionFallbackEnabled: Bool
 
   /// Send dictated transcripts through the LLM for clean-up and tone matching.
-  /// Off means Parakeet's output goes to the cursor as-is.
+  /// Off means Parakeet's output goes to the cursor as-is. Off for new
+  /// installs, so dictation stays on this Mac until the user opts in.
   public var refinementEnabled: Bool
+  /// The user agreed, in Settings, that clean-up may send each dictation's text
+  /// to ChatGPT. Required for the language-model route; on-device clean-up
+  /// does not need it. Older settings lack it, so cloud clean-up that was only
+  /// on by default pauses until the user confirms it.
+  public var cloudCleanupConsented: Bool
   /// Hard local-only switch. Nothing leaves the machine: no refinement, no AI
   /// commands. Overrides `refinementEnabled` rather than editing it, so turning
   /// privacy mode back off restores the user's previous choice.
@@ -301,8 +248,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
   /// else is inserted at the cursor.
   public var askAlwaysOpensWindow: Bool
 
-  /// Which service does the language work.
-  public var llmProvider: LLMProvider
   /// Which on-device recognizer to load.
   public var speechModel: SpeechModelChoice
   /// Extra rules the user wants every clean-up to follow ("Use British
@@ -322,7 +267,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     commandHotkey: Hotkey?,
     dictationActivationMode: DictationActivationMode,
     llmModel: String,
-    refinementEnabled: Bool = true,
+    refinementEnabled: Bool = false,
+    cloudCleanupConsented: Bool = false,
     privacyMode: Bool = false,
     historyEnabled: Bool = true,
     historyLimit: Int = TranscriptHistoryStore.defaultLimit,
@@ -332,7 +278,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     translationTargetLanguage: String = "",
     askHotkey: Hotkey? = nil,
     askAlwaysOpensWindow: Bool = false,
-    llmProvider: LLMProvider = .chatGPTSubscription,
+    dictationProvider: DictationProvider = .parakeet,
+    openAITranscriptionModel: String = SpeechTranscriptionRequest.defaultOpenAIModel,
+    openAITranscriptionFallbackEnabled: Bool = true,
     speechModel: SpeechModelChoice = .english,
     customInstructions: String = "",
     soundFeedback: Bool = true,
@@ -345,6 +293,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     self.dictationActivationMode = dictationActivationMode
     self.llmModel = llmModel
     self.refinementEnabled = refinementEnabled
+    self.cloudCleanupConsented = cloudCleanupConsented
     self.privacyMode = privacyMode
     self.historyEnabled = historyEnabled
     self.historyLimit = historyLimit
@@ -354,7 +303,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     self.translationTargetLanguage = translationTargetLanguage
     self.askHotkey = askHotkey
     self.askAlwaysOpensWindow = askAlwaysOpensWindow
-    self.llmProvider = llmProvider
+    self.dictationProvider = dictationProvider
+    self.openAITranscriptionModel = openAITranscriptionModel
+    self.openAITranscriptionFallbackEnabled = openAITranscriptionFallbackEnabled
     self.speechModel = speechModel
     self.customInstructions = customInstructions
     self.soundFeedback = soundFeedback
@@ -375,8 +326,15 @@ public struct AppSettings: Codable, Equatable, Sendable {
       forKey: .dictationActivationMode
     )
     llmModel = try container.decode(String.self, forKey: .llmModel)
+    // Older builds allowed audio-only models in the shared text override.
+    // Migrate only that field, preserving hotkeys and audio preferences.
+    if Self.isTranscriptionOnlyModel(llmModel) {
+      llmModel = ""
+    }
     refinementEnabled =
-      try container.decodeIfPresent(Bool.self, forKey: .refinementEnabled) ?? true
+      try container.decodeIfPresent(Bool.self, forKey: .refinementEnabled) ?? false
+    cloudCleanupConsented =
+      try container.decodeIfPresent(Bool.self, forKey: .cloudCleanupConsented) ?? false
     privacyMode =
       try container.decodeIfPresent(Bool.self, forKey: .privacyMode) ?? false
     historyEnabled =
@@ -395,9 +353,21 @@ public struct AppSettings: Codable, Equatable, Sendable {
     askHotkey = try container.decodeIfPresent(Hotkey.self, forKey: .askHotkey)
     askAlwaysOpensWindow =
       try container.decodeIfPresent(Bool.self, forKey: .askAlwaysOpensWindow) ?? false
-    llmProvider =
-      try container.decodeIfPresent(LLMProvider.self, forKey: .llmProvider)
-      ?? .chatGPTSubscription
+    dictationProvider =
+      try container.decodeIfPresent(
+        DictationProvider.self,
+        forKey: .dictationProvider
+      ) ?? .parakeet
+    openAITranscriptionModel =
+      try container.decodeIfPresent(
+        String.self,
+        forKey: .openAITranscriptionModel
+      ) ?? SpeechTranscriptionRequest.defaultOpenAIModel
+    openAITranscriptionFallbackEnabled =
+      try container.decodeIfPresent(
+        Bool.self,
+        forKey: .openAITranscriptionFallbackEnabled
+      ) ?? true
     speechModel =
       try container.decodeIfPresent(SpeechModelChoice.self, forKey: .speechModel)
       ?? .english
@@ -414,12 +384,19 @@ public struct AppSettings: Codable, Equatable, Sendable {
       try container.decodeIfPresent([CustomMode].self, forKey: .customModes) ?? []
   }
 
-  /// Refinement runs only with a model configured and privacy mode off.
-  /// An empty model is not a validation error — it degrades to raw dictation.
+  public var dictationTranscriptionRequest: SpeechTranscriptionRequest {
+    SpeechTranscriptionRequest(
+      provider: dictationProvider,
+      model: openAITranscriptionModel,
+      fallbackToParakeet: openAITranscriptionFallbackEnabled
+    )
+  }
+
+  /// Cloud refinement runs only when it is enabled, the user consented to
+  /// sending dictation text, and privacy mode is off. A blank model is passed
+  /// through so the Codex CLI subscription default applies.
   public var isRefinementActive: Bool {
-    refinementEnabled
-      && !privacyMode
-      && !llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    refinementEnabled && cloudCleanupConsented && !privacyMode
   }
 
   /// Which refiner a dictation uses, or nil to insert it as recognised.
@@ -440,20 +417,19 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
   /// AI Commands need the network, so privacy mode disables them outright.
   public var areCommandsActive: Bool {
-    commandHotkey != nil && !privacyMode && !trimmed(llmModel).isEmpty
+    commandHotkey != nil && !privacyMode
   }
 
-  /// Translation needs the model and a destination language.
+  /// Translation needs a destination language.
   public var isTranslateActive: Bool {
     translateHotkey != nil
       && !privacyMode
-      && !trimmed(llmModel).isEmpty
       && !trimmed(translationTargetLanguage).isEmpty
   }
 
-  /// Custom modes use the language model, so they share its requirements.
+  /// Custom modes use the language model, so privacy mode disables them.
   public var areCustomModesActive: Bool {
-    !privacyMode && !trimmed(llmModel).isEmpty
+    !privacyMode
   }
 
   public func customMode(id: UUID) -> CustomMode? {
@@ -461,7 +437,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
   }
 
   public var isAskActive: Bool {
-    askHotkey != nil && !privacyMode && !trimmed(llmModel).isEmpty
+    askHotkey != nil && !privacyMode
   }
 
   /// The hotkey bound to each mode, for the global monitor.
@@ -516,12 +492,17 @@ public struct AppSettings: Codable, Equatable, Sendable {
     guard customModes.allSatisfy(\.isComplete) else {
       throw AppSettingsValidationError.incompleteCustomMode
     }
+    // A blank model is valid: Codex then uses the subscription's default.
     let requiresValues = !privacyMode && !waived
-    if requiresValues, trimmedModel.isEmpty, llmModes.contains(where: { $0 != nil }) {
-      throw AppSettingsValidationError.emptyModel
-    }
     if requiresValues, translateHotkey != nil, trimmedLanguage.isEmpty {
       throw AppSettingsValidationError.emptyTargetLanguage
+    }
+    let trimmedTranscriptionModel = trimmed(openAITranscriptionModel)
+    if dictationProvider == .openAI, trimmedTranscriptionModel.isEmpty {
+      throw AppSettingsValidationError.emptyOpenAITranscriptionModel
+    }
+    if Self.isTranscriptionOnlyModel(trimmedModel) {
+      throw AppSettingsValidationError.transcriptionOnlyTextModel
     }
 
     var validatedSettings = self
@@ -529,11 +510,52 @@ public struct AppSettings: Codable, Equatable, Sendable {
     validatedSettings.translationTargetLanguage = trimmedLanguage
     validatedSettings.customInstructions = trimmed(customInstructions)
     validatedSettings.historyLimit = min(max(historyLimit, 1), 2_000)
+    validatedSettings.openAITranscriptionModel = trimmedTranscriptionModel
     return validatedSettings
   }
 
+  private static func isTranscriptionOnlyModel(_ model: String) -> Bool {
+    let model = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if model == "whisper-1" { return true }
+    return model.range(
+      of:
+        "^(gpt-transcribe|gpt-live-transcribe|gpt-4o-transcribe|gpt-4o-mini-transcribe|gpt-4o-transcribe-diarize)(-[0-9]{4}-[0-9]{2}-[0-9]{2})?$",
+      options: .regularExpression
+    ) != nil
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case dictationHotkey
+    case commandHotkey
+    case dictationActivationMode
+    case llmModel
+    case dictationProvider
+    case openAITranscriptionModel
+    case openAITranscriptionFallbackEnabled
+    case refinementEnabled
+    case cloudCleanupConsented
+    case privacyMode
+    case historyEnabled
+    case historyLimit
+    case defaultTone
+    case styleOverrides
+    case translateHotkey
+    case translationTargetLanguage
+    case askHotkey
+    case askAlwaysOpensWindow
+    case speechModel
+    case customInstructions
+    case soundFeedback
+    case cleanupEngine
+    case livePreview
+    case customModes
+  }
+
+  /// Same rules as recording a shortcut in Settings, so a hand-edited or
+  /// migrated preference cannot bind something the recorder would refuse.
   private static func isUsable(_ hotkey: Hotkey) -> Bool {
-    hotkey == .rightOption || !hotkey.modifiers.isEmpty
+    HotkeyCapture.resolve(keyCode: hotkey.keyCode, modifiers: hotkey.modifiers)
+      == .success(hotkey)
   }
 }
 

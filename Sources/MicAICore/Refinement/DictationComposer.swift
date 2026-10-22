@@ -184,7 +184,8 @@ public actor DictationComposer {
     refined: Bool,
     settings: AppSettings
   ) -> HistoryEntry? {
-    guard settings.historyEnabled else {
+    // A cancelled dictation is never inserted, so it gets no entry at all.
+    guard settings.historyEnabled, !Task.isCancelled else {
       return nil
     }
     return HistoryEntry(

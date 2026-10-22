@@ -88,8 +88,12 @@ struct PrivacySettingsPane: View {
     return cleansUpOnDevice ? items + ", clean-up" : items
   }
 
+  /// Lists clean-up only when it will really send text: enabled, set to the
+  /// language model, and consented to.
   private var networkItems: String {
-    cleansUpOnDevice ? "Command, Translate, Ask AI" : "Clean-up, Command, Translate, Ask AI"
+    draft.refinementRoute == .languageModel
+      ? "Clean-up, Command, Translate, Ask AI, custom modes"
+      : "Command, Translate, Ask AI, custom modes"
   }
 
   private var privacyFooter: String {

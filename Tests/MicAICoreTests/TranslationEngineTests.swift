@@ -72,19 +72,17 @@ struct TranslationEngineTests {
   }
 
   @Test
-  func blankModelFailsBeforeAnyRequest() async throws {
-    let transformer = RecordingTransformer(output: "unused")
+  func blankModelUsesTheProviderDefault() async throws {
+    let transformer = RecordingTransformer(output: "hola")
     let engine = TranslationEngine(transformer: transformer)
 
-    await expectFailure(is: .llmServerFailure) {
-      _ = try await engine.translate(
-        spokenText: "hello",
-        selectedText: nil,
-        targetLanguage: "Spanish",
-        model: " "
-      )
-    }
-    #expect(await transformer.callCount == 0)
+    _ = try await engine.translate(
+      spokenText: "hello",
+      selectedText: nil,
+      targetLanguage: "Spanish",
+      model: " "
+    )
+    #expect(await transformer.callCount == 1)
   }
 
   @Test

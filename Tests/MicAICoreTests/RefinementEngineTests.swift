@@ -85,16 +85,15 @@ struct RefinementEngineTests {
   }
 
   @Test
-  func emptyModelSkipsTheNetworkAndKeepsTheTranscript() async {
-    let transformer = StubTransformer(result: .success("should not be used"))
+  func blankModelStillRefinesWithTheProviderDefault() async {
+    let transformer = StubTransformer(result: .success("Hello there."))
     let engine = RefinementEngine(transformer: transformer)
 
     let outcome = await engine.refine(
       RefinementRequest(transcript: "hello there", tone: .neutral, model: "  ")
     )
 
-    #expect(outcome.text == "hello there")
-    #expect(await transformer.callCount == 0)
+    #expect(await transformer.callCount == 1)
   }
 
   @Test

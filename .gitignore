@@ -8,6 +8,7 @@ node_modules/
 *.log
 outputs/
 dist/
+dist-ios/
 build/
 .pytest_cache/
 .mypy_cache/
@@ -18,4 +19,12 @@ build/
 .swiftpm-config/
 .swiftpm-security/
 .research/
+.workflow/
+.idea/
+.cursor/hooks/state/
+dist-ios/
 *.xcodeproj
+.cursor/hooks/state/
+.cursor/settings.json
+.vscode/launch.json
+.remember/

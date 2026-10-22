@@ -134,7 +134,10 @@ private actor GrowingAudioCapture: AudioCapturing {
     elapsed = total
   }
 
-  func start(levels: @escaping @Sendable (Float) -> Void) async throws {}
+  func start(
+    levels: @escaping @Sendable (Float) -> Void,
+    maximumDurationReached: @escaping @Sendable () -> Void
+  ) async throws {}
 
   func stop() async throws -> RecordedAudio {
     RecordedAudio(

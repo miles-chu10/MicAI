@@ -61,6 +61,65 @@ struct DictationComposerTests {
   }
 
   @Test
+  func defaultSettingsMakeNoProviderCall() async throws {
+    let harness = try await Harness()
+
+    let result = await harness.composer.compose(
+      transcript: transcript("please send the draft on Tuesday at 3 PM"),
+      mode: .dictation,
+      target: harness.slackTarget,
+      settings: .defaults
+    )
+
+    #expect(result.text == "please send the draft on Tuesday at 3 PM")
+    #expect(!result.refined)
+    #expect(await harness.refiner.callCount == 0)
+  }
+
+  @Test
+  func cloudCleanUpWithoutConsentMakesNoProviderCall() async throws {
+    let harness = try await Harness()
+    var settings = harness.settings()
+    settings.cloudCleanupConsented = false
+
+    let result = await harness.composer.compose(
+      transcript: transcript("please send the draft on Tuesday at 3 PM"),
+      mode: .dictation,
+      target: harness.slackTarget,
+      settings: settings
+    )
+
+    #expect(!result.refined)
+    #expect(await harness.refiner.callCount == 0)
+  }
+
+  @Test
+  func settingsFromBeforeConsentMakeNoProviderCall() async throws {
+    // An older build saved clean-up as on by default. After the update it
+    // must stay local until the user allows sending text.
+    let legacy = """
+      {
+        "dictationHotkey": { "keyCode": 61, "modifiers": [] },
+        "dictationActivationMode": "hold",
+        "llmModel": "",
+        "refinementEnabled": true
+      }
+      """
+    let settings = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
+    let harness = try await Harness()
+
+    let result = await harness.composer.compose(
+      transcript: transcript("please send the draft on Tuesday at 3 PM"),
+      mode: .dictation,
+      target: harness.slackTarget,
+      settings: settings
+    )
+
+    #expect(result.text == "please send the draft on Tuesday at 3 PM")
+    #expect(await harness.refiner.callCount == 0)
+  }
+
+  @Test
   func refinementFailureStillInsertsTheTranscript() async throws {
     let harness = try await Harness()
     await harness.refiner.setFailure(.llmRateLimited)
@@ -98,6 +157,27 @@ struct DictationComposerTests {
     #expect(entries.first?.finalText == "Shipping this today.")
     #expect(entries.first?.applicationName == "Slack")
     #expect(entries.first?.id == result.historyEntryID)
+  }
+
+  @Test
+  func cancelledDictationIsNotRecorded() async throws {
+    let harness = try await Harness()
+    let composer = harness.composer
+    let settings = harness.settings()
+    let spoken = transcript("never mind")
+
+    let result = await Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      return await composer.compose(
+        transcript: spoken,
+        mode: .dictation,
+        target: nil,
+        settings: settings
+      )
+    }.value
+
+    #expect(await harness.history.all().isEmpty)
+    #expect(result.historyEntryID == nil)
   }
 
   @Test
@@ -248,6 +328,7 @@ struct DictationComposerTests {
       history: TranscriptHistoryStore(file: directory.appendingPathComponent("h.json"))
     )
     var settings = AppSettings.defaults
+    settings.refinementEnabled = true
     settings.cleanupEngine = .onDevice
 
     let result = await composer.compose(
@@ -317,7 +398,9 @@ private struct Harness {
       dictationHotkey: .rightOption,
       commandHotkey: nil,
       dictationActivationMode: .hold,
-      llmModel: "gpt-5-codex"
+      llmModel: "gpt-5-codex",
+      refinementEnabled: true,
+      cloudCleanupConsented: true
     )
   }
 }

@@ -1,6 +1,11 @@
 import Foundation
 
 public actor DictationPipeline {
+  private struct Context: Sendable {
+    let mode: MicAIMode
+    let transcriptionRequest: SpeechTranscriptionRequest
+  }
+
   private static let requiredSampleRate = 16_000
   private static let minimumSampleCount = 4_800
   /// How often live preview re-reads what has been said so far.
@@ -11,20 +16,24 @@ public actor DictationPipeline {
 
   private let audioCapture: any AudioCapturing
   private let recognizer: any SpeechRecognizing
+  private let transcriptionRouter: (any SpeechTranscriptionRouting)?
   private let cleaner: any TranscriptCleaning
   private let coordinator: OperationCoordinator
+  private var contexts: [UUID: Context] = [:]
   private let previewInterval: Duration
   private var previews: [UUID: Task<Void, Never>] = [:]
 
   public init(
     audioCapture: any AudioCapturing,
     recognizer: any SpeechRecognizing,
+    transcriptionRouter: (any SpeechTranscriptionRouting)? = nil,
     cleaner: any TranscriptCleaning,
     coordinator: OperationCoordinator,
     previewInterval: Duration = DictationPipeline.defaultPreviewInterval
   ) {
     self.audioCapture = audioCapture
     self.recognizer = recognizer
+    self.transcriptionRouter = transcriptionRouter
     self.cleaner = cleaner
     self.coordinator = coordinator
     self.previewInterval = previewInterval
@@ -37,14 +46,26 @@ public actor DictationPipeline {
   public func begin(
     mode: MicAIMode = .dictation,
     target: TargetIdentity,
+    transcriptionRequest: SpeechTranscriptionRequest? = nil,
     levels: @escaping @Sendable (Float) -> Void,
+    maximumDurationReached: @escaping @Sendable () -> Void = {},
     operationStarted: @escaping @Sendable (UUID) async -> Void = { _ in },
     partials: (@Sendable (String) -> Void)? = nil
   ) async throws -> UUID {
     let operationID = try await coordinator.begin(mode: mode, target: target)
+    contexts[operationID] = Context(
+      mode: mode,
+      transcriptionRequest: transcriptionRequest ?? .localParakeet
+    )
     await operationStarted(operationID)
     do {
-      try await audioCapture.start(levels: levels)
+      guard await coordinator.isCurrent(operationID: operationID) else {
+        throw MicAIError.cancelled
+      }
+      try await audioCapture.start(
+        levels: levels,
+        maximumDurationReached: maximumDurationReached
+      )
       guard await coordinator.isCurrent(operationID: operationID) else {
         await audioCapture.cancel()
         throw MicAIError.cancelled
@@ -54,9 +75,11 @@ public actor DictationPipeline {
       }
       return operationID
     } catch let error as MicAIError {
+      contexts.removeValue(forKey: operationID)
       _ = await coordinator.fail(operationID: operationID, error: error)
       throw error
     } catch {
+      contexts.removeValue(forKey: operationID)
       _ = await coordinator.fail(operationID: operationID, error: .audioUnavailable)
       throw MicAIError.audioUnavailable
     }
@@ -65,7 +88,18 @@ public actor DictationPipeline {
   /// `allowingSilence` is for modes that can work on a selection alone: a
   /// recording too short or too quiet to transcribe then ends as an empty
   /// transcript rather than failing the operation.
-  public func finish(operationID: UUID, allowingSilence: Bool = false) async throws -> Transcript {
+  public func finish(
+    operationID: UUID,
+    allowingSilence: Bool = false,
+    providerStatus:
+      @escaping @Sendable (
+        UUID,
+        DictationProviderStatus
+      ) async -> Void = { _, _ in }
+  ) async throws -> Transcript {
+    guard let context = contexts.removeValue(forKey: operationID) else {
+      throw MicAIError.invalidTransition
+    }
     // The preview shares the recognizer. Waiting for it to finish means the
     // final pass never runs alongside a preview pass.
     await stopPreview(operationID)
@@ -102,10 +136,23 @@ public actor DictationPipeline {
     }
 
     let recognizer = self.recognizer
+    let transcriptionRouter = self.transcriptionRouter
     let cleaner = self.cleaner
     let task = Task<Transcript, Error> {
       try Task.checkCancellation()
-      let transcript = try await recognizer.transcribe(samples: audio.samples)
+      let transcript: Transcript
+      if context.mode == .dictation, let transcriptionRouter {
+        transcript = try await transcriptionRouter.transcribe(
+          samples: audio.samples,
+          sampleRate: audio.sampleRate,
+          request: context.transcriptionRequest,
+          status: { status in
+            await providerStatus(operationID, status)
+          }
+        )
+      } else {
+        transcript = try await recognizer.transcribe(samples: audio.samples)
+      }
       try Task.checkCancellation()
       let cleanedText = cleaner.clean(transcript.text)
       guard !cleanedText.isEmpty else {
@@ -156,6 +203,7 @@ public actor DictationPipeline {
   }
 
   public func cancel(operationID: UUID) async {
+    contexts.removeValue(forKey: operationID)
     await stopPreview(operationID)
     await audioCapture.cancel()
     await coordinator.cancel(operationID: operationID)

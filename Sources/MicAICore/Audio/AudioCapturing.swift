@@ -26,7 +26,10 @@ public struct AudioSnapshot: Sendable, Equatable {
 }
 
 public protocol AudioCapturing: Sendable {
-  func start(levels: @escaping @Sendable (Float) -> Void) async throws
+  func start(
+    levels: @escaping @Sendable (Float) -> Void,
+    maximumDurationReached: @escaping @Sendable () -> Void
+  ) async throws
   func stop() async throws -> RecordedAudio
   func cancel() async
   /// The newest `tail` of audio without stopping, or nil when not recording or
