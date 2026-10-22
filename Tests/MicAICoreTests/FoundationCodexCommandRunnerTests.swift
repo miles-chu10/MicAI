@@ -4,7 +4,9 @@ import Testing
 @testable import MicAICore
 
 /// Runs real child processes: the fake runner used elsewhere cannot catch
-/// pipe-level failures.
+/// pipe-level failures. The time limit turns a pipe deadlock into a failure
+/// instead of a CI job that runs until GitHub's six-hour cap.
+@Suite(.timeLimit(.minutes(1)))
 struct FoundationCodexCommandRunnerTests {
   private let largeInput = Data(repeating: UInt8(ascii: "a"), count: 1_048_576)
   private let runner = FoundationCodexCommandRunner()

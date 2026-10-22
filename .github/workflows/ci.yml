@@ -55,6 +55,8 @@ jobs:
 
       - name: Test
         run: bash scripts/codex-test.sh
+        # A normal run takes under two minutes; anything longer is a hang.
+        timeout-minutes: 15
 
   package:
     name: Package app bundle

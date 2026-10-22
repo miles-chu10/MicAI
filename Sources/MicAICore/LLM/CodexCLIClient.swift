@@ -89,32 +89,37 @@ public struct FoundationCodexCommandRunner: CodexCommandRunning, Sendable {
       try Task.checkCancellation()
       try process.run()
 
+      // Each blocking pipe or wait call gets its own thread. On the shared
+      // Swift concurrency pool they could fill every worker (a 3-core CI
+      // runner has three) and leave the reader the child is waiting on
+      // unscheduled, which hangs forever.
+      //
       // Written alongside the reads: a prompt larger than the pipe buffer
       // would otherwise deadlock against a child blocked writing its output.
-      async let inputWritten: Void = Task.detached {
+      async let inputWritten: Void = onDedicatedThread {
         try? inputBox.handle.write(contentsOf: standardInput)
         try? inputBox.handle.close()
-      }.value
+      }
       // Both pipes are drained to the end on their own threads, so a child
       // filling one pipe never blocks on the other. Past the stdout limit
       // the child is stopped; reading continues only until the pipe closes.
       let limits = self.limits
-      async let output = Task.detached {
+      async let output = onDedicatedThread {
         try BoundedPipeReader.read(outputBox.handle, limit: limits.standardOutput) {
           processBox.terminate()
         }
-      }.value
-      async let error = Task.detached {
+      }
+      async let error = onDedicatedThread {
         try BoundedPipeReader.read(errorBox.handle, limit: limits.standardError) {}
-      }.value
-      async let status = Task.detached {
+      }
+      async let status = onDedicatedThread {
         processBox.waitUntilExit()
-      }.value
+      }
 
-      _ = await inputWritten
+      _ = try await inputWritten
       let (outputData, outputOverflowed) = try await output
       let (errorData, _) = try await error
-      let terminationStatus = await status
+      let terminationStatus = try await status
       try Task.checkCancellation()
       guard !outputOverflowed else {
         throw MicAIError.llmOutputTooLarge
@@ -367,6 +372,18 @@ private final class CodexProcessBox: @unchecked Sendable {
   func terminate() {
     guard process.isRunning else { return }
     process.terminate()
+  }
+}
+
+/// Runs blocking work on a new thread outside the Swift concurrency pool and
+/// resumes when it returns.
+func onDedicatedThread<Value: Sendable>(
+  _ work: @escaping @Sendable () throws -> Value
+) async throws -> Value {
+  try await withCheckedThrowingContinuation { continuation in
+    Thread.detachNewThread {
+      continuation.resume(with: Result { try work() })
+    }
   }
 }
 
