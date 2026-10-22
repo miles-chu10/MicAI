@@ -85,7 +85,7 @@ every 800 ms.
 | Plain dictation | 0 model calls by default | `defaultSettingsMakeNoProviderCall` (exists) | Static |
 | Calls per operation | ≤ 1, no automatic retry | Runner invocation count is 1 on success and failure | Static |
 | Input size | 8,000 characters of selection, 2,000 of instruction | Oversized input rejected before the runner is called, with a "select less" message | Static |
-| Output size | 4,000 characters; stdout capped at 256 KB | Runner output over the cap fails as `llmIncomplete` without buffering it all | Static |
+| Output size | 4,000 characters; stdout capped at 256 KiB, stderr at 64 KiB (done: `CodexOutputLimits`) | Over the stdout cap fails as `llmOutputTooLarge` and stops the child; stderr past its cap is drained and dropped (`FoundationCodexCommandRunnerTests`) | Static |
 | Context sent | Instruction and selection only; no history, screen or clipboard | Captured stdin has exactly the payload keys | Static |
 | Usage | Input, cached input, output reported; unknown stays unknown | Existing `LLMUsageTests`, `CodexJSONParserTests` | Static |
 | Timeout | 90 s (exists) | `timeoutMapsToServerFailure` (exists) | Static |

@@ -77,6 +77,23 @@ struct CodexCLIClientTests {
   }
 
   @Test
+  func oversizeOutputFailsWithoutAnAnswerOrUsage() async {
+    let usage = UsageReportCollector()
+    let client = CodexCLIClient(
+      executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+      runner: OversizeCodexRunner(),
+      usageHandler: usage.append
+    )
+
+    await #expect(throws: MicAIError.llmOutputTooLarge) {
+      _ = try await client.transform(
+        LLMRequest(instruction: "draft", selectedText: nil, model: "")
+      )
+    }
+    #expect(usage.values.isEmpty)
+  }
+
+  @Test
   func omitsModelFlagWhenUsingSubscriptionDefault() async throws {
     let runner = CapturingCodexRunner(result: .success("done"))
     let client = CodexCLIClient(
@@ -238,6 +255,17 @@ struct CodexCLIClientTests {
     } catch {
       #expect(error as? MicAIError == expected)
     }
+  }
+}
+
+private struct OversizeCodexRunner: CodexCommandRunning, Sendable {
+  func run(
+    executableURL: URL,
+    arguments: [String],
+    standardInput: Data,
+    currentDirectoryURL: URL
+  ) async throws -> CodexCommandResult {
+    throw MicAIError.llmOutputTooLarge
   }
 }
 

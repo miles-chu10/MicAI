@@ -134,6 +134,8 @@ extension MicAIError {
       "llm_server_failure"
     case .llmIncomplete:
       "llm_incomplete"
+    case .llmOutputTooLarge:
+      "llm_output_too_large"
     case .onDeviceModelUnavailable:
       "on_device_model_unavailable"
     case .targetChanged:

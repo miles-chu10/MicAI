@@ -25,8 +25,37 @@ public protocol CodexCommandRunning: Sendable {
   ) async throws -> CodexCommandResult
 }
 
+/// How much a Codex child may write before MicAI stops reading it.
+///
+/// Standard output carries the answer as JSON events, so going over its limit
+/// fails the request with `llmOutputTooLarge`: a cut-off answer is never
+/// inserted. Standard error is only read to classify failures, so past its
+/// limit the rest is drained and discarded. Both limits bound memory however
+/// much the child writes.
+public struct CodexOutputLimits: Sendable, Equatable {
+  /// 256 KiB, far above a 4,000-character answer plus its JSON events.
+  public static let standardOutputDefault = 256 * 1_024
+  /// 64 KiB, enough for any login or HTTP error message.
+  public static let standardErrorDefault = 64 * 1_024
+
+  public let standardOutput: Int
+  public let standardError: Int
+
+  public init(
+    standardOutput: Int = CodexOutputLimits.standardOutputDefault,
+    standardError: Int = CodexOutputLimits.standardErrorDefault
+  ) {
+    self.standardOutput = standardOutput
+    self.standardError = standardError
+  }
+}
+
 public struct FoundationCodexCommandRunner: CodexCommandRunning, Sendable {
-  public init() {}
+  private let limits: CodexOutputLimits
+
+  public init(limits: CodexOutputLimits = CodexOutputLimits()) {
+    self.limits = limits
+  }
 
   public func run(
     executableURL: URL,
@@ -66,24 +95,35 @@ public struct FoundationCodexCommandRunner: CodexCommandRunning, Sendable {
         try? inputBox.handle.write(contentsOf: standardInput)
         try? inputBox.handle.close()
       }.value
+      // Both pipes are drained to the end on their own threads, so a child
+      // filling one pipe never blocks on the other. Past the stdout limit
+      // the child is stopped; reading continues only until the pipe closes.
+      let limits = self.limits
       async let output = Task.detached {
-        try outputBox.handle.readToEnd() ?? Data()
+        try BoundedPipeReader.read(outputBox.handle, limit: limits.standardOutput) {
+          processBox.terminate()
+        }
       }.value
       async let error = Task.detached {
-        try errorBox.handle.readToEnd() ?? Data()
+        try BoundedPipeReader.read(errorBox.handle, limit: limits.standardError) {}
       }.value
       async let status = Task.detached {
         processBox.waitUntilExit()
       }.value
 
       _ = await inputWritten
-      let result = try await CodexCommandResult(
-        terminationStatus: status,
-        standardOutput: output,
-        standardError: error
-      )
+      let (outputData, outputOverflowed) = try await output
+      let (errorData, _) = try await error
+      let terminationStatus = await status
       try Task.checkCancellation()
-      return result
+      guard !outputOverflowed else {
+        throw MicAIError.llmOutputTooLarge
+      }
+      return CodexCommandResult(
+        terminationStatus: terminationStatus,
+        standardOutput: outputData,
+        standardError: errorData
+      )
     } onCancel: {
       processBox.terminate()
     }
@@ -327,6 +367,36 @@ private final class CodexProcessBox: @unchecked Sendable {
   func terminate() {
     guard process.isRunning else { return }
     process.terminate()
+  }
+}
+
+enum BoundedPipeReader {
+  static let chunkSize = 64 * 1_024
+
+  /// Reads `handle` to end of file, keeping at most `limit` bytes. Calls
+  /// `onOverflow` once, the first time the limit is passed, and keeps
+  /// draining so the writer is never left blocked on a full pipe.
+  static func read(
+    _ handle: FileHandle,
+    limit: Int,
+    onOverflow: () -> Void
+  ) throws -> (data: Data, overflowed: Bool) {
+    var data = Data()
+    var overflowed = false
+    while let chunk = try handle.read(upToCount: chunkSize), !chunk.isEmpty {
+      guard !overflowed else {
+        continue
+      }
+      let room = limit - data.count
+      if chunk.count <= room {
+        data.append(chunk)
+      } else {
+        data.append(chunk.prefix(max(room, 0)))
+        overflowed = true
+        onOverflow()
+      }
+    }
+    return (data, overflowed)
   }
 }
 
