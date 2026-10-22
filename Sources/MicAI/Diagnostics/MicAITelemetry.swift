@@ -126,6 +126,8 @@ extension MicAIError {
       "llm_server_failure"
     case .llmIncomplete:
       "llm_incomplete"
+    case .onDeviceModelUnavailable:
+      "on_device_model_unavailable"
     case .targetChanged:
       "target_changed"
     case .clipboardChanged:

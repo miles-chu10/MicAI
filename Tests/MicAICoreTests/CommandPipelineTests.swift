@@ -99,6 +99,7 @@ private final class CommandPipelinePasteboard: PasteboardAccessing, @unchecked S
 private struct CommandPipelineKeyboard: KeyboardSynthesizing, Sendable {
   func copy() throws {}
   func paste() throws {}
+  func collapseSelectionToEnd() throws {}
 }
 
 private struct CommandPipelineTargetValidator: TargetValidating, Sendable {

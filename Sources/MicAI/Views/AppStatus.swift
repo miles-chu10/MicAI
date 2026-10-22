@@ -5,13 +5,13 @@ extension OperationPhase {
   var displayName: String {
     switch self {
     case .idle:
-      "Idle"
+      "Ready"
     case .recording:
-      "Recording"
+      "Listening"
     case .transcribing:
       "Transcribing"
     case .awaitingLLM:
-      "Waiting for ChatGPT"
+      "Polishing"
     case .inserting:
       "Inserting"
     case .failed:
@@ -22,13 +22,13 @@ extension OperationPhase {
   var systemImage: String {
     switch self {
     case .idle:
-      "circle.fill"
+      "checkmark.circle.fill"
     case .recording:
-      "waveform.circle.fill"
+      "waveform"
     case .transcribing:
-      "text.bubble.fill"
+      "laptopcomputer"
     case .awaitingLLM:
-      "sparkles"
+      "cloud.fill"
     case .inserting:
       "arrow.down.doc.fill"
     case .failed:
@@ -39,13 +39,13 @@ extension OperationPhase {
   var tint: Color {
     switch self {
     case .idle:
-      .secondary
+      .green
     case .recording:
-      MicAIStatusColor.danger
+      .primary
     case .transcribing, .awaitingLLM, .inserting:
-      MicAIStatusColor.accent
+      .accentColor
     case .failed:
-      MicAIStatusColor.attention
+      .red
     }
   }
 }
@@ -54,22 +54,12 @@ struct StatusPill: View {
   let phase: OperationPhase
 
   var body: some View {
-    HStack(spacing: 6) {
-      Circle()
-        .fill(phase.tint)
-        .frame(width: 8, height: 8)
-        .accessibilityHidden(true)
-
-      Text(phase.displayName)
-        .foregroundStyle(.secondary)
-    }
-    .font(.callout)
-    .padding(.horizontal, 10)
-    .padding(.vertical, 6)
-    .fixedSize()
-    .micAIStatusSurface()
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel("MicAI operation: \(phase.displayName)")
-    .help("Current MicAI operation: \(phase.displayName)")
+    Label(phase.displayName, systemImage: phase.systemImage)
+      .font(.callout.weight(.medium))
+      .foregroundStyle(phase.tint)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 5)
+      .background(phase.tint.opacity(0.12), in: .capsule)
+      .accessibilityLabel("MicAI status: \(phase.displayName)")
   }
 }

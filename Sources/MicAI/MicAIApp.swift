@@ -3,65 +3,62 @@ import SwiftUI
 
 @main
 struct MicAIApp: App {
-  @NSApplicationDelegateAdaptor(MicAIApplicationDelegate.self) private var appDelegate
+  @StateObject private var appModel = AppModel()
 
   var body: some Scene {
-    Window("History", id: "history") {
-      HistoryView(appModel: appDelegate.appModel)
+    WindowGroup("MicAI", id: "main") {
+      PrimaryAppView(appModel: appModel)
+        .frame(minWidth: 640, minHeight: 520)
+        .onAppear {
+          NSApplication.shared.activate(ignoringOtherApps: true)
+          appModel.refreshSystemStatus()
+        }
+        .onReceive(
+          NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification
+          )
+        ) { _ in
+          appModel.refreshSystemStatus()
+        }
+        .onReceive(
+          NotificationCenter.default.publisher(
+            for: NSApplication.willTerminateNotification
+          )
+        ) { _ in
+          appModel.stopRuntime()
+        }
     }
-    .defaultSize(width: 860, height: 520)
+    .defaultSize(width: 820, height: 680)
+    .defaultPosition(.center)
+    .windowResizability(.contentMinSize)
+    .windowToolbarStyle(.unified)
+    .commands {
+      MicAICommands(appModel: appModel)
+    }
+
+    Window("History", id: "history") {
+      HistoryView(appModel: appModel)
+    }
+    .defaultSize(width: 920, height: 580)
     .defaultPosition(.center)
 
     Window("Ask AI", id: "answer") {
-      AskAnswerView(appModel: appDelegate.appModel)
+      AskAnswerView(appModel: appModel)
     }
-    .defaultSize(width: 520, height: 380)
+    .defaultSize(width: 540, height: 440)
     .defaultPosition(.center)
 
     // The label form is used deliberately: unlike the menu's content, the label
     // view is always instantiated, so it is the one place in a menu-bar-only app
     // that can hold an observer and still reach `openWindow`.
     MenuBarExtra {
-      MenuContentView(appModel: appDelegate.appModel)
+      MenuContentView(appModel: appModel)
     } label: {
-      MenuBarLabel(appModel: appDelegate.appModel)
-    }
-    .commands {
-      SidebarCommands()
-      MicAICommands(appModel: appDelegate.appModel)
+      MenuBarLabel(appModel: appModel)
     }
 
     Settings {
-      SettingsView(appModel: appDelegate.appModel)
+      SettingsView(appModel: appModel)
     }
-  }
-}
-
-@MainActor
-final class MicAIApplicationDelegate: NSObject, NSApplicationDelegate {
-  let appModel = AppModel()
-
-  func applicationDidFinishLaunching(_ notification: Notification) {
-    MainWindowPresenter.install(appModel: appModel)
-  }
-
-  func applicationDidBecomeActive(_ notification: Notification) {
-    appModel.refreshSystemStatus()
-  }
-
-  func applicationShouldHandleReopen(
-    _ sender: NSApplication,
-    hasVisibleWindows flag: Bool
-  ) -> Bool {
-    MainWindowPresenter.show()
-    return false
-  }
-
-  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    false
-  }
-
-  func applicationWillTerminate(_ notification: Notification) {
-    appModel.stopRuntime()
   }
 }

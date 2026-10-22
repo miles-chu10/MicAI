@@ -1,417 +1,242 @@
 import MicAICore
 import SwiftUI
 
-private enum PrimarySection: String, CaseIterable, Identifiable {
-  case overview
-  case dictation
-  case commands
-  case activity
-
-  var id: Self { self }
-
-  var title: String {
-    switch self {
-    case .overview:
-      "Overview"
-    case .dictation:
-      "Dictation"
-    case .commands:
-      "AI Commands"
-    case .activity:
-      "Activity"
-    }
-  }
-
-  var systemImage: String {
-    switch self {
-    case .overview:
-      "square.grid.2x2"
-    case .dictation:
-      "mic"
-    case .commands:
-      "sparkles"
-    case .activity:
-      "clock"
-    }
-  }
-}
-
+/// The main window: what MicAI can do, whether it is ready, and what it has
+/// done lately. Configuration lives in Settings; this page is for glancing.
 struct PrimaryAppView: View {
   @ObservedObject var appModel: AppModel
-  @State private var selection: PrimarySection? = .overview
+  @Environment(\.openWindow) private var openWindow
 
   var body: some View {
-    NavigationSplitView {
-      List(PrimarySection.allCases, selection: $selection) { section in
-        Label(section.title, systemImage: section.systemImage)
-          .tag(section)
-      }
-      .navigationTitle("MicAI")
-      .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
-      .safeAreaInset(edge: .bottom) {
-        readinessFooter
-      }
-    } detail: {
-      detail
-        .navigationTitle(selection?.title ?? "Overview")
-        .toolbar {
-          ToolbarItem(placement: .automatic) {
-            StatusPill(phase: appModel.operationPhase)
-          }
-          ToolbarItem(placement: .primaryAction) {
-            SettingsLink {
-              Label("Settings", systemImage: "gearshape")
+    ScrollView {
+      VStack(alignment: .leading, spacing: 28) {
+        if !appModel.readiness.dictation.isReady {
+          SetupBanner(appModel: appModel)
+        }
+
+        section("Shortcuts") {
+          LazyVGrid(
+            columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)],
+            spacing: 14
+          ) {
+            ForEach(MicAIMode.builtIn, id: \.self) { mode in
+              ModeCard(
+                mode: mode,
+                title: mode.shortName,
+                summary: mode.summary,
+                hotkey: appModel.settingsStore.settings.hotkey(for: mode),
+                availability: availability(for: mode)
+              )
             }
           }
         }
-        .sheet(isPresented: $appModel.isOnboardingPresented) {
-          OnboardingView(appModel: appModel)
+
+        if !appModel.settingsStore.settings.customModes.isEmpty {
+          section("Your modes") {
+            LazyVGrid(
+              columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)],
+              spacing: 14
+            ) {
+              ForEach(appModel.settingsStore.settings.customModes) { customMode in
+                ModeCard(
+                  mode: .custom,
+                  title: customMode.name,
+                  summary: customMode.instructions,
+                  hotkey: customMode.hotkey,
+                  availability: customAvailability(for: customMode)
+                )
+              }
+            }
+          }
         }
-    }
-  }
 
-  @ViewBuilder
-  private var detail: some View {
-    switch selection ?? .overview {
-    case .overview:
-      OverviewView(appModel: appModel)
-    case .dictation:
-      DictationView(appModel: appModel)
-    case .commands:
-      CommandsView(appModel: appModel)
-    case .activity:
-      ActivityView(appModel: appModel)
-    }
-  }
+        section("This week") {
+          UsageSummary(stats: appModel.usage(since: HistoryView.weekStart))
+            .clipShape(.rect(cornerRadius: 10))
+        }
 
-  private var readinessFooter: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      Divider()
-      Label(
-        appModel.readiness.dictation.isReady ? "Dictation ready" : "Setup required",
-        systemImage: appModel.readiness.dictation.isReady
-          ? "checkmark.circle.fill" : "exclamationmark.circle"
-      )
-      .font(.caption)
-      .foregroundStyle(
-        appModel.readiness.dictation.isReady ? MicAIStatusColor.ready : Color.secondary
-      )
-      Button("Review Setup") {
-        appModel.showOnboarding()
+        section("Recent") {
+          if appModel.historyEntries.isEmpty {
+            Text(
+              appModel.settingsStore.settings.historyEnabled
+                ? "Nothing yet. What you dictate will show up here."
+                : "History is off in Settings › Privacy."
+            )
+            .foregroundStyle(.secondary)
+          } else {
+            VStack(spacing: 0) {
+              ForEach(appModel.historyEntries.prefix(5)) { entry in
+                RecentRow(entry: entry)
+                if entry.id != appModel.historyEntries.prefix(5).last?.id {
+                  Divider()
+                }
+              }
+            }
+            .padding(.horizontal, 14)
+            .background(.background.secondary, in: .rect(cornerRadius: 10))
+            Button("Open History") {
+              openWindow(id: "history")
+            }
+            .buttonStyle(.link)
+          }
+        }
       }
-      .buttonStyle(.link)
-      .font(.caption)
+      .padding(28)
+      .frame(maxWidth: 820, alignment: .leading)
+      .frame(maxWidth: .infinity)
     }
-    .padding()
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(.bar)
+    .navigationTitle("MicAI")
+    .toolbar {
+      ToolbarItem(placement: .status) {
+        StatusPill(phase: appModel.operationPhase)
+      }
+      ToolbarItem(placement: .primaryAction) {
+        SettingsLink {
+          Label("Settings", systemImage: "gearshape")
+        }
+      }
+    }
+    .sheet(isPresented: $appModel.isOnboardingPresented) {
+      OnboardingView(appModel: appModel)
+    }
+  }
+
+  private func section<Content: View>(
+    _ title: String,
+    @ViewBuilder content: () -> Content
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Text(title)
+        .font(.headline)
+      content()
+    }
+  }
+
+  private func customAvailability(for customMode: CustomMode) -> String? {
+    if customMode.hotkey == nil {
+      return "No shortcut"
+    }
+    let settings = appModel.settingsStore.settings
+    if settings.privacyMode {
+      return "Paused in privacy mode"
+    }
+    return settings.areCustomModesActive ? nil : "Needs a model"
+  }
+
+  /// Why a mode would not run right now, or nil when it would.
+  private func availability(for mode: MicAIMode) -> String? {
+    let settings = appModel.settingsStore.settings
+    if settings.hotkey(for: mode) == nil {
+      return "Off"
+    }
+    guard mode != .dictation else {
+      return appModel.readiness.dictation.isReady ? nil : "Finish setup"
+    }
+    if settings.privacyMode {
+      return "Paused in privacy mode"
+    }
+    if settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return "Needs a model"
+    }
+    if mode == .translate,
+      settings.translationTargetLanguage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+      return "Needs a language"
+    }
+    return nil
   }
 }
 
-private struct OverviewView: View {
-  @ObservedObject var appModel: AppModel
-
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 24) {
-        VStack(alignment: .leading, spacing: 8) {
-          Text("Speak where you work")
-            .font(.largeTitle.weight(.semibold))
-          Text(
-            "MicAI transcribes dictation locally and uses ChatGPT only for explicit AI Commands."
-          )
-          .font(.title3)
-          .foregroundStyle(.secondary)
-        }
-
-        HStack(alignment: .top, spacing: 16) {
-          WorkflowCard(
-            title: "Dictation",
-            icon: "mic.fill",
-            shortcut: appModel.settingsStore.settings.dictationHotkey.displayName,
-            ready: appModel.readiness.dictation,
-            detail: "Hold or toggle the hotkey, speak, then let MicAI paste at the original cursor."
-          )
-          WorkflowCard(
-            title: "AI Commands",
-            icon: "sparkles",
-            shortcut: appModel.settingsStore.settings.commandHotkey?.displayName
-              ?? "Not configured",
-            ready: appModel.readiness.command,
-            detail: "Select text and speak an instruction, or draft new text at the cursor."
-          )
-        }
-
-        VStack(alignment: .leading, spacing: 10) {
-          Text("System status")
-            .font(.headline)
-          PermissionStatusView(appModel: appModel)
-        }
-
-        if let errorMessage = appModel.errorMessage {
-          Label {
-            Text(errorMessage)
-          } icon: {
-            Image(systemName: "exclamationmark.triangle.fill")
-              .foregroundStyle(MicAIStatusColor.attention)
-          }
-          .micAINoticeSurface(tint: MicAIStatusColor.attention)
-        }
-
-        if !appModel.settingsStore.hasSeenOnboarding
-          || !appModel.readiness.dictation.isReady
-        {
-          Button("Complete Setup", systemImage: "checklist") {
-            appModel.showOnboarding()
-          }
-          .micAIPrimaryButtonStyle()
-          .controlSize(.large)
-        }
-      }
-      .padding(32)
-      .frame(maxWidth: 900, alignment: .leading)
-    }
-  }
-}
-
-private struct WorkflowCard: View {
+private struct ModeCard: View {
+  let mode: MicAIMode
   let title: String
-  let icon: String
-  let shortcut: String
-  let ready: FeatureReadiness
-  let detail: String
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Label(title, systemImage: icon)
-        .font(.title2.weight(.semibold))
-      Text(shortcut)
-        .font(.system(.headline, design: .rounded))
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(.quaternary, in: .rect(cornerRadius: 7))
-      Text(detail)
-        .foregroundStyle(.secondary)
-      Spacer(minLength: 0)
-      Label(
-        ready.isReady ? "Ready" : "\(ready.blockers.count) setup item(s)",
-        systemImage: ready.isReady ? "checkmark.circle.fill" : "circle.dashed"
-      )
-      .foregroundStyle(ready.isReady ? MicAIStatusColor.ready : Color.secondary)
-    }
-    .padding(20)
-    .frame(maxWidth: .infinity, minHeight: 190, alignment: .leading)
-    .micAICardSurface(cornerRadius: 14)
-  }
-}
-
-private struct DictationView: View {
-  @ObservedObject var appModel: AppModel
-
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 20) {
-        FeatureHeader(
-          icon: "mic.fill",
-          title: "Local dictation",
-          subtitle: "Audio stays on this Mac and is transcribed with Parakeet TDT v2."
-        )
-        ReadinessList(readiness: appModel.readiness.dictation)
-        GroupBox("How to dictate") {
-          VStack(alignment: .leading, spacing: 10) {
-            Text(
-              "1. Place the cursor in TextEdit, Mail, a browser, or another text field."
-            )
-            Text(
-              "2. \(instructionForDictation(appModel.settingsStore.settings))."
-            )
-            Text("3. Press Escape before paste to cancel without inserting.")
-          }
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(.vertical, 6)
-        }
-        ModelStatusView(
-          state: appModel.modelState,
-          transcript: nil,
-          prepare: appModel.prepareModel
-        )
-      }
-      .padding(32)
-      .frame(maxWidth: 760, alignment: .leading)
-    }
-  }
-
-  private func instructionForDictation(_ settings: AppSettings) -> String {
-    switch settings.dictationActivationMode {
-    case .hold:
-      "Hold \(settings.dictationHotkey.displayName), speak, and release"
-    case .toggle:
-      "Press \(settings.dictationHotkey.displayName) once to start and again to stop"
-    }
-  }
-}
-
-private struct CommandsView: View {
-  @ObservedObject var appModel: AppModel
-
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 20) {
-        FeatureHeader(
-          icon: "sparkles",
-          title: "AI Commands",
-          subtitle:
-            "Your instruction and selected text run ephemerally through your signed-in Codex CLI."
-        )
-        ReadinessList(readiness: appModel.readiness.command)
-        GroupBox("Provider") {
-          LabeledContent("Codex CLI · ChatGPT subscription") {
-            Text(appModel.providerStatus.summary)
-              .multilineTextAlignment(.trailing)
-          }
-          .padding(.vertical, 6)
-        }
-        GroupBox("Examples") {
-          VStack(alignment: .leading, spacing: 8) {
-            Text("“Make this more formal”")
-            Text("“Turn this into bullet points”")
-            Text("“Reply agreeing and propose Tuesday”")
-          }
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(.vertical, 6)
-        }
-        Text(
-          "AI Commands are hold-to-talk. Select text first to replace it; with no selection, the result is inserted at the cursor."
-        )
-        .foregroundStyle(.secondary)
-      }
-      .padding(32)
-      .frame(maxWidth: 760, alignment: .leading)
-    }
-  }
-}
-
-private struct ActivityView: View {
-  @ObservedObject var appModel: AppModel
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 20) {
-      FeatureHeader(
-        icon: "clock",
-        title: "Current session",
-        subtitle:
-          "Your latest result and how long MicAI took. Audio is never kept; saved text is in History."
-      )
-
-      if !appModel.metrics.timings.isEmpty {
-        PerformanceSummary(metrics: appModel.metrics)
-      }
-
-      if let transcript = appModel.lastTranscript {
-        GroupBox("Most recent local result") {
-          Text(transcript)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 8)
-        }
-      } else {
-        ContentUnavailableView(
-          "No activity yet",
-          systemImage: "waveform",
-          description: Text("Your most recent result will appear here for this session.")
-        )
-      }
-      Spacer()
-    }
-    .padding(32)
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-  }
-}
-
-private struct PerformanceSummary: View {
-  let metrics: LocalMetrics
+  let summary: String
+  let hotkey: Hotkey?
+  let availability: String?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      Text("Release to insertion")
-        .font(.headline)
-      HStack(spacing: 12) {
-        ForEach(MicAIMode.allCases, id: \.self) { mode in
-          if let median = metrics.median(for: mode), let worst = metrics.worst(for: mode) {
-            VStack(alignment: .leading, spacing: 4) {
-              Label(mode.displayName, systemImage: "timer")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(MicAIStatusColor.modeTint(mode))
-              Text(Self.format(median))
-                .font(.title2.weight(.semibold).monospacedDigit())
-              Text("median · worst \(Self.format(worst))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .micAICardSurface()
-          }
+      HStack {
+        Image(systemName: mode.symbol)
+          .font(.title3)
+          .foregroundStyle(mode.tint)
+          .frame(width: 32, height: 32)
+          .background(mode.tint.opacity(0.14), in: .rect(cornerRadius: 8))
+          .accessibilityHidden(true)
+        Spacer()
+        if let hotkey {
+          KeyCaps(hotkey)
         }
       }
-      Text("Last \(metrics.timings.count) operations this session. Kept in memory only.")
-        .font(.caption)
+      Text(title)
+        .font(.headline)
+      Text(summary)
+        .font(.callout)
         .foregroundStyle(.secondary)
+        .lineLimit(3)
+        .fixedSize(horizontal: false, vertical: true)
+      Spacer(minLength: 0)
+      Label(
+        availability ?? "Ready",
+        systemImage: availability == nil ? "checkmark.circle.fill" : "circle.dashed"
+      )
+      .font(.caption)
+      .foregroundStyle(availability == nil ? Color.green : Color.secondary)
     }
-  }
-
-  private static func format(_ duration: Duration) -> String {
-    duration.formatted(
-      .units(allowed: [.seconds], width: .narrow, fractionalPart: .show(length: 2)))
+    .padding(16)
+    .frame(maxWidth: .infinity, minHeight: 150, alignment: .leading)
+    .background(.background.secondary, in: .rect(cornerRadius: 12))
+    .overlay {
+      RoundedRectangle(cornerRadius: 12)
+        .strokeBorder(.separator, lineWidth: 0.5)
+    }
+    .accessibilityElement(children: .combine)
   }
 }
 
-private struct FeatureHeader: View {
-  let icon: String
-  let title: String
-  let subtitle: String
+private struct RecentRow: View {
+  let entry: HistoryEntry
 
   var body: some View {
-    HStack(alignment: .top, spacing: 14) {
-      Image(systemName: icon)
-        .font(.system(size: 28))
-        .foregroundStyle(.tint)
-        .frame(width: 42, height: 42)
-        .background(.tint.opacity(0.12), in: .rect(cornerRadius: 10))
-      VStack(alignment: .leading, spacing: 4) {
-        Text(title)
-          .font(.title.weight(.semibold))
-        Text(subtitle)
+    HStack(alignment: .firstTextBaseline, spacing: 10) {
+      ModeDot(mode: entry.mode)
+      Text(entry.preview)
+        .lineLimit(1)
+      Spacer()
+      Text(entry.applicationName ?? "")
+        .foregroundStyle(.secondary)
+      Text(entry.createdAt, style: .time)
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+    }
+    .font(.callout)
+    .padding(.vertical, 9)
+  }
+}
+
+private struct SetupBanner: View {
+  @ObservedObject var appModel: AppModel
+
+  var body: some View {
+    HStack(spacing: 14) {
+      Image(systemName: "exclamationmark.circle.fill")
+        .font(.title2)
+        .foregroundStyle(.red)
+        .accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: 3) {
+        Text("Finish setting up MicAI")
+          .font(.headline)
+        Text(appModel.readiness.dictation.blockers.map(\.message).joined(separator: " "))
+          .font(.callout)
           .foregroundStyle(.secondary)
       }
-    }
-  }
-}
-
-private struct ReadinessList: View {
-  let readiness: FeatureReadiness
-
-  var body: some View {
-    GroupBox(readiness.isReady ? "Ready" : "Before you begin") {
-      if readiness.isReady {
-        Label("All required services are ready.", systemImage: "checkmark.circle.fill")
-          .foregroundStyle(MicAIStatusColor.ready)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(.vertical, 6)
-      } else {
-        VStack(alignment: .leading, spacing: 8) {
-          ForEach(readiness.blockers, id: \.self) { blocker in
-            Label {
-              Text(blocker.message)
-            } icon: {
-              Image(systemName: "exclamationmark.circle")
-                .foregroundStyle(MicAIStatusColor.attention)
-            }
-          }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 6)
+      Spacer()
+      Button("Continue Setup") {
+        appModel.showOnboarding()
       }
+      .buttonStyle(.borderedProminent)
     }
+    .padding(16)
+    .background(.red.opacity(0.1), in: .rect(cornerRadius: 12))
   }
 }

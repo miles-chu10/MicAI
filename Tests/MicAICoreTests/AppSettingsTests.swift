@@ -232,6 +232,12 @@ struct AppSettingsTests {
           "dictationProvider",
           "openAITranscriptionModel",
           "openAITranscriptionFallbackEnabled",
+          "speechModel",
+          "customInstructions",
+          "soundFeedback",
+          "cleanupEngine",
+          "livePreview",
+          "customModes",
         ]
     )
     let serializedKeys = object.keys.map { $0.lowercased() }
@@ -321,6 +327,39 @@ struct AppSettingsCompatibilityTests {
     settings.privacyMode = true
 
     #expect(throws: Never.self) { try settings.validated() }
+  }
+
+  @Test
+  func leavingPrivacyModeWithoutAModelSucceedsWithTheModesOff() throws {
+    // Saved while private with no model or language, then switched back from
+    // the menu: the switch must not fail validation.
+    var settings = AppSettings.defaults
+    settings.llmModel = ""
+    settings.commandHotkey = .controlOptionSpace
+    settings.translateHotkey = .controlOptionT
+    settings.askHotkey = .controlOptionA
+    settings.privacyMode = false
+
+    #expect(throws: AppSettingsValidationError.self) { try settings.validated() }
+    let saved = try settings.validated(waivingModelRequirements: true)
+
+    // A blank model is the Codex default, so only the mode missing its
+    // language stays off.
+    #expect(!saved.privacyMode)
+    #expect(saved.commandHotkey == .controlOptionSpace)
+    #expect(saved.areCommandsActive)
+    #expect(!saved.isTranslateActive)
+    #expect(saved.isAskActive)
+  }
+
+  @Test
+  func waivingStillReportsStructuralProblems() {
+    var settings = AppSettings.defaults
+    settings.commandHotkey = settings.dictationHotkey
+
+    #expect(throws: AppSettingsValidationError.duplicateHotkeys) {
+      try settings.validated(waivingModelRequirements: true)
+    }
   }
 
   @Test
@@ -478,12 +517,84 @@ struct TranslateAndAskSettingsTests {
     #expect(MicAIMode.command.capturesSelection)
     #expect(MicAIMode.translate.capturesSelection)
     #expect(MicAIMode.ask.capturesSelection)
-    #expect(MicAIMode.allCases.count == 4)
+    #expect(MicAIMode.custom.capturesSelection)
+    #expect(MicAIMode.builtIn.count == 4)
+    #expect(MicAIMode.allCases.count == 5)
   }
 
   private func base() -> AppSettings {
     var settings = AppSettings.defaults
     settings.llmModel = "gpt-5-codex"
     return settings
+  }
+}
+
+@Suite
+struct FeatureSettingsCompatibilityTests {
+  @Test
+  func settingsSavedBeforeProviderAndSpeechModelExistedGetSafeDefaults() throws {
+    let legacy = """
+      {
+        "dictationHotkey": { "keyCode": 61, "modifiers": [] },
+        "dictationActivationMode": "hold",
+        "llmModel": "gpt-test"
+      }
+      """
+    let settings = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
+
+    #expect(settings.speechModel == .english)
+    #expect(settings.customInstructions.isEmpty)
+    #expect(settings.soundFeedback)
+    #expect(settings.cleanupEngine == .languageModel)
+    #expect(settings.livePreview)
+    #expect(settings.customModes.isEmpty)
+  }
+
+  @Test
+  func onDeviceCleanUpRunsInPrivacyModeAndWithoutAModel() {
+    var settings = AppSettings.defaults
+    settings.cleanupEngine = .onDevice
+    settings.privacyMode = true
+    #expect(settings.llmModel.isEmpty)
+    #expect(settings.refinementRoute == .onDevice)
+
+    settings.refinementEnabled = false
+    #expect(settings.refinementRoute == nil)
+  }
+
+  @Test
+  func languageModelCleanUpUsesTheCodexDefaultButNotInPrivacyMode() {
+    var settings = AppSettings.defaults
+    settings.refinementEnabled = true
+    settings.cleanupEngine = .languageModel
+    #expect(settings.llmModel.isEmpty)
+    #expect(settings.refinementRoute == .languageModel)
+
+    settings.privacyMode = true
+    #expect(settings.refinementRoute == nil)
+  }
+
+  @Test
+  func hybridActivationRoundTrips() throws {
+    var settings = AppSettings.defaults
+    settings.dictationActivationMode = .hybrid
+    let data = try JSONEncoder().encode(settings)
+    #expect(
+      try JSONDecoder().decode(AppSettings.self, from: data).dictationActivationMode == .hybrid
+    )
+  }
+
+  @Test
+  func validationTrimsCustomInstructions() throws {
+    var settings = AppSettings.defaults
+    settings.customInstructions = "  Use British spelling.\n"
+    #expect(try settings.validated().customInstructions == "Use British spelling.")
+  }
+
+  @Test
+  func keyCapsListOneLabelPerKey() {
+    #expect(Hotkey.rightOption.keyCaps == ["Right ⌥"])
+    #expect(Hotkey.controlOptionSpace.keyCaps == ["⌃", "⌥", "Space"])
+    #expect(Hotkey.commandShiftSpace.keyCaps == ["⇧", "⌘", "Space"])
   }
 }

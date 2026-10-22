@@ -3,53 +3,25 @@ import Combine
 import MicAICore
 import SwiftUI
 
+/// Owns the floating panel that hosts the HUD.
+///
+/// The panel never takes focus and ignores the mouse: it must not steal the
+/// cursor from the app you are dictating into, and the transparent area around
+/// the pill must not block clicks.
 @MainActor
-final class RecordingHUDController: ObservableObject {
+final class RecordingHUDController {
+  let model = HUDModel()
   private var panel: NSPanel?
   private var failureDismissTask: Task<Void, Never>?
+  private var cancellables: Set<AnyCancellable> = []
 
-  func update(
-    mode: MicAIMode?,
-    phase: OperationPhase,
-    level: Float,
-    message: String?
-  ) {
-    failureDismissTask?.cancel()
-
-    if phase == .idle {
-      close()
-      return
-    }
-
-    let shouldPosition = panel?.isVisible != true
-    let panel = panel ?? makePanel()
-    let view = RecordingHUDView(
-      mode: mode,
-      phase: phase,
-      inputLevel: level,
-      message: message
-    )
-    if let hostingView = panel.contentView as? NSHostingView<RecordingHUDView> {
-      hostingView.rootView = view
-    } else {
-      panel.contentView = NSHostingView(rootView: view)
-    }
-    if shouldPosition {
-      position(panel)
-    }
-    panel.orderFrontRegardless()
-
-    if case .failed(let error) = phase {
-      // A cancellation only needs acknowledging; a real failure needs reading.
-      let visibleFor: Duration = error == .cancelled ? .milliseconds(1_200) : .seconds(4)
-      failureDismissTask = Task { [weak self] in
-        try? await Task.sleep(for: visibleFor)
-        guard !Task.isCancelled else {
-          return
-        }
-        self?.close()
+  init() {
+    model.$phase
+      .removeDuplicates()
+      .sink { [weak self] phase in
+        self?.show(for: phase)
       }
-    }
+      .store(in: &cancellables)
   }
 
   func close() {
@@ -58,41 +30,64 @@ final class RecordingHUDController: ObservableObject {
     panel?.orderOut(nil)
   }
 
+  private func show(for phase: OperationPhase) {
+    failureDismissTask?.cancel()
+
+    if phase == .idle {
+      close()
+      return
+    }
+
+    let panel = panel ?? makePanel()
+    position(panel)
+    panel.orderFrontRegardless()
+
+    if case .failed = phase {
+      failureDismissTask = Task { [weak self] in
+        try? await Task.sleep(for: .seconds(4))
+        guard !Task.isCancelled else {
+          return
+        }
+        self?.close()
+      }
+    }
+  }
+
   private func makePanel() -> NSPanel {
+    let size = RecordingHUDView.panelSize
     let panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 328, height: 72),
-      styleMask: [.nonactivatingPanel, .fullSizeContentView],
+      contentRect: NSRect(x: 0, y: 0, width: size.width, height: size.height),
+      styleMask: [.nonactivatingPanel, .borderless],
       backing: .buffered,
       defer: false
     )
-    panel.level = .floating
+    panel.level = .statusBar
     panel.isFloatingPanel = true
     panel.hidesOnDeactivate = false
     panel.becomesKeyOnlyIfNeeded = true
-    panel.isMovableByWindowBackground = true
+    panel.ignoresMouseEvents = true
     panel.backgroundColor = .clear
     panel.isOpaque = false
-    panel.hasShadow = true
-    panel.animationBehavior = .utilityWindow
-    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-    panel.titleVisibility = .hidden
-    panel.titlebarAppearsTransparent = true
+    // The pill draws its own soft edge; a window shadow would outline the
+    // transparent padding around it.
+    panel.hasShadow = false
+    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+    panel.contentView = NSHostingView(rootView: RecordingHUDView(model: model))
     self.panel = panel
     return panel
   }
 
+  /// Bottom centre of the screen you are working on, clear of the Dock. The
+  /// bottom keeps the HUD away from the menu bar and the notch, and near where
+  /// most text fields sit.
   private func position(_ panel: NSPanel) {
-    let pointer = NSEvent.mouseLocation
-    guard
-      let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) })
-        ?? NSScreen.main
-    else {
+    guard let screen = NSScreen.main else {
       return
     }
     let visible = screen.visibleFrame
     let origin = NSPoint(
       x: visible.midX - panel.frame.width / 2,
-      y: visible.minY + 44
+      y: visible.minY + 16
     )
     panel.setFrameOrigin(origin)
   }

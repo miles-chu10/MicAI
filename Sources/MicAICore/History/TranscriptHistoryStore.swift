@@ -8,7 +8,7 @@ public actor TranscriptHistoryStore {
   public static let defaultLimit = 200
 
   private let file: JSONCollectionFile<HistoryEntry>
-  private let limit: Int
+  private var limit: Int
   private var entries: [HistoryEntry]
 
   public init(file url: URL, limit: Int = TranscriptHistoryStore.defaultLimit) {
@@ -61,6 +61,17 @@ public actor TranscriptHistoryStore {
 
   public func delete(entryID: UUID) {
     entries.removeAll { $0.id == entryID }
+    trimAndPersist()
+  }
+
+  /// Applies a new "Keep up to" value from Settings straight away, trimming
+  /// the oldest entries if it is lower.
+  public func setLimit(_ newLimit: Int) {
+    let clamped = max(1, newLimit)
+    guard clamped != limit else {
+      return
+    }
+    limit = clamped
     trimAndPersist()
   }
 

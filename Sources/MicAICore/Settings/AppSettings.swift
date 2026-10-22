@@ -3,6 +3,10 @@ import Foundation
 public enum DictationActivationMode: String, Codable, CaseIterable, Sendable {
   case hold
   case toggle
+  /// Hold to talk, or tap once to keep recording hands-free until the next
+  /// press. Which one happened is decided on release, by how long the key was
+  /// down, so neither gesture needs a timer or a second key.
+  case hybrid
 
   public var displayName: String {
     switch self {
@@ -10,6 +14,60 @@ public enum DictationActivationMode: String, Codable, CaseIterable, Sendable {
       "Hold"
     case .toggle:
       "Toggle"
+    case .hybrid:
+      "Hold or tap"
+    }
+  }
+}
+
+/// Where dictation clean-up runs.
+public enum CleanupEngine: String, Codable, CaseIterable, Sendable {
+  /// ChatGPT through the Codex CLI, the same route as the AI modes.
+  case languageModel
+  /// Apple's on-device model (Apple Intelligence, macOS 26 or later). The
+  /// transcript never leaves the Mac, so it keeps working in privacy mode.
+  case onDevice
+
+  public var displayName: String {
+    switch self {
+    case .languageModel:
+      "Your language model"
+    case .onDevice:
+      "Apple Intelligence, on this Mac"
+    }
+  }
+}
+
+/// Which refiner a dictation goes through, once settings are taken into
+/// account. Nil means the transcript goes in as recognised.
+public enum RefinementRoute: Sendable, Equatable {
+  case languageModel
+  case onDevice
+}
+
+/// The on-device Parakeet model. Both run locally; they trade language coverage
+/// for English accuracy.
+public enum SpeechModelChoice: String, Codable, CaseIterable, Sendable {
+  /// Parakeet TDT v2: English only, the most accurate for English.
+  case english
+  /// Parakeet TDT v3: 25 European languages, detected automatically.
+  case multilingual
+
+  public var displayName: String {
+    switch self {
+    case .english:
+      "English"
+    case .multilingual:
+      "Multilingual"
+    }
+  }
+
+  public var detail: String {
+    switch self {
+    case .english:
+      "Parakeet TDT v2. Best accuracy for English."
+    case .multilingual:
+      "Parakeet TDT v3. 25 European languages, detected as you speak."
     }
   }
 }
@@ -40,9 +98,9 @@ public struct Hotkey: Codable, Hashable, Sendable {
     modifiers: [.control, .option]
   )
 
-  /// Virtual key codes to labels, for the ones offered in Settings. Values are
-  /// Carbon `kVK_ANSI_*` constants; anything unlisted falls back to its number
-  /// rather than guessing at a character that depends on keyboard layout.
+  /// Virtual key codes to labels. Values are Carbon `kVK_*` constants, labelled
+  /// as on a US ANSI keyboard, which is how macOS itself names shortcut keys in
+  /// most places. Anything unlisted falls back to its number.
   static let keyNames: [UInt16: String] = [
     0: "A", 11: "B", 8: "C", 2: "D", 14: "E", 3: "F", 5: "G", 4: "H", 34: "I",
     38: "J", 40: "K", 37: "L", 46: "M", 45: "N", 31: "O", 35: "P", 12: "Q",
@@ -56,6 +114,24 @@ public struct Hotkey: Codable, Hashable, Sendable {
     100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12",
     123: "←", 124: "→", 125: "↓", 126: "↑",
   ]
+
+  /// Keys a recorded shortcut may not use: Escape cancels every operation, and
+  /// Delete and Forward Delete edit text.
+  public static let reservedKeyCodes: Set<UInt16> = [51, 53, 117]
+
+  /// The shortcut a key press would record, or nil when it cannot be one.
+  ///
+  /// It needs Control, Option or Command. Shift alone is not enough: MicAI
+  /// listens to keys without consuming them, so Shift-A would fire every time
+  /// you typed a capital A.
+  public static func recordable(keyCode: UInt16, modifiers: Set<HotkeyModifier>) -> Hotkey? {
+    guard !reservedKeyCodes.contains(keyCode),
+      !modifiers.isDisjoint(with: [.control, .option, .command])
+    else {
+      return nil
+    }
+    return Hotkey(keyCode: keyCode, modifiers: modifiers)
+  }
 
   public var keyCode: UInt16
   public var modifiers: Set<HotkeyModifier>
@@ -76,6 +152,18 @@ public struct Hotkey: Codable, Hashable, Sendable {
     let keyName = Self.keyNames[keyCode] ?? "Key \(keyCode)"
     return modifierNames.joined() + keyName
   }
+
+  /// One label per physical key, in the order macOS menus print them, for
+  /// drawing keycaps.
+  public var keyCaps: [String] {
+    if self == .rightOption {
+      return ["Right ⌥"]
+    }
+    let modifierNames = HotkeyModifier.displayOrder.compactMap { modifier in
+      modifiers.contains(modifier) ? modifier.symbol : nil
+    }
+    return modifierNames + [Self.keyNames[keyCode] ?? "Key \(keyCode)"]
+  }
 }
 
 public enum AppSettingsValidationError: Error, Equatable, Sendable {
@@ -84,6 +172,7 @@ public enum AppSettingsValidationError: Error, Equatable, Sendable {
   case unusableHotkey
   case emptyTargetLanguage
   case transcriptionOnlyTextModel
+  case incompleteCustomMode
 }
 
 extension AppSettingsValidationError: LocalizedError {
@@ -92,7 +181,7 @@ extension AppSettingsValidationError: LocalizedError {
     case .emptyOpenAITranscriptionModel:
       "Enter an OpenAI transcription model."
     case .duplicateHotkeys:
-      "Each mode needs its own hotkey."
+      "Each mode needs its own shortcut."
     case .unusableHotkey:
       "Choose a supported hotkey with modifiers."
     case .emptyTargetLanguage:
@@ -100,6 +189,8 @@ extension AppSettingsValidationError: LocalizedError {
     case .transcriptionOnlyTextModel:
       "Choose a text model for AI tasks, or leave the override blank to use your Codex default. "
         + "Transcription models belong in the audio settings."
+    case .incompleteCustomMode:
+      "Give each custom mode a name and instructions."
     }
   }
 }
@@ -151,6 +242,20 @@ public struct AppSettings: Codable, Equatable, Sendable {
   /// else is inserted at the cursor.
   public var askAlwaysOpensWindow: Bool
 
+  /// Which on-device recognizer to load.
+  public var speechModel: SpeechModelChoice
+  /// Extra rules the user wants every clean-up to follow ("Use British
+  /// spelling", "Never use exclamation marks"). Appended to the tone guidance.
+  public var customInstructions: String
+  /// Play the system sounds for start, finish and failure.
+  public var soundFeedback: Bool
+  /// Where clean-up runs.
+  public var cleanupEngine: CleanupEngine
+  /// Show a rough transcript above the HUD while recording.
+  public var livePreview: Bool
+  /// The user's own modes, in the order Settings lists them.
+  public var customModes: [CustomMode]
+
   public init(
     dictationHotkey: Hotkey,
     commandHotkey: Hotkey?,
@@ -168,7 +273,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
     askAlwaysOpensWindow: Bool = false,
     dictationProvider: DictationProvider = .parakeet,
     openAITranscriptionModel: String = SpeechTranscriptionRequest.defaultOpenAIModel,
-    openAITranscriptionFallbackEnabled: Bool = true
+    openAITranscriptionFallbackEnabled: Bool = true,
+    speechModel: SpeechModelChoice = .english,
+    customInstructions: String = "",
+    soundFeedback: Bool = true,
+    cleanupEngine: CleanupEngine = .languageModel,
+    livePreview: Bool = true,
+    customModes: [CustomMode] = []
   ) {
     self.dictationHotkey = dictationHotkey
     self.commandHotkey = commandHotkey
@@ -187,6 +298,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
     self.dictationProvider = dictationProvider
     self.openAITranscriptionModel = openAITranscriptionModel
     self.openAITranscriptionFallbackEnabled = openAITranscriptionFallbackEnabled
+    self.speechModel = speechModel
+    self.customInstructions = customInstructions
+    self.soundFeedback = soundFeedback
+    self.cleanupEngine = cleanupEngine
+    self.livePreview = livePreview
+    self.customModes = customModes
   }
 
   // Decoded field by field with defaults rather than synthesized, so settings
@@ -241,6 +358,20 @@ public struct AppSettings: Codable, Equatable, Sendable {
         Bool.self,
         forKey: .openAITranscriptionFallbackEnabled
       ) ?? true
+    speechModel =
+      try container.decodeIfPresent(SpeechModelChoice.self, forKey: .speechModel)
+      ?? .english
+    customInstructions =
+      try container.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
+    soundFeedback =
+      try container.decodeIfPresent(Bool.self, forKey: .soundFeedback) ?? true
+    cleanupEngine =
+      try container.decodeIfPresent(CleanupEngine.self, forKey: .cleanupEngine)
+      ?? .languageModel
+    livePreview =
+      try container.decodeIfPresent(Bool.self, forKey: .livePreview) ?? true
+    customModes =
+      try container.decodeIfPresent([CustomMode].self, forKey: .customModes) ?? []
   }
 
   public var dictationTranscriptionRequest: SpeechTranscriptionRequest {
@@ -257,6 +388,22 @@ public struct AppSettings: Codable, Equatable, Sendable {
     refinementEnabled && !privacyMode
   }
 
+  /// Which refiner a dictation uses, or nil to insert it as recognised.
+  ///
+  /// On-device clean-up ignores privacy mode and the model name: nothing
+  /// leaves the Mac, and there is no model to choose.
+  public var refinementRoute: RefinementRoute? {
+    guard refinementEnabled else {
+      return nil
+    }
+    switch cleanupEngine {
+    case .onDevice:
+      return .onDevice
+    case .languageModel:
+      return isRefinementActive ? .languageModel : nil
+    }
+  }
+
   /// AI Commands need the network, so privacy mode disables them outright.
   public var areCommandsActive: Bool {
     commandHotkey != nil && !privacyMode
@@ -267,6 +414,15 @@ public struct AppSettings: Codable, Equatable, Sendable {
     translateHotkey != nil
       && !privacyMode
       && !trimmed(translationTargetLanguage).isEmpty
+  }
+
+  /// Custom modes use the language model, so privacy mode disables them.
+  public var areCustomModesActive: Bool {
+    !privacyMode
+  }
+
+  public func customMode(id: UUID) -> CustomMode? {
+    customModes.first { $0.id == id }
   }
 
   public var isAskActive: Bool {
@@ -284,6 +440,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
       translateHotkey
     case .ask:
       askHotkey
+    case .custom:
+      // Each custom mode has its own shortcut; see `customModes`.
+      nil
     }
   }
 
@@ -295,10 +454,15 @@ public struct AppSettings: Codable, Equatable, Sendable {
     AppStyleResolver(overrides: styleOverrides, defaultTone: defaultTone)
   }
 
-  public func validated() throws -> AppSettings {
+  /// `waivingModelRequirements` is for leaving privacy mode from the menu.
+  /// Privacy mode lets AI shortcuts be saved without a model or a language,
+  /// and switching it off must not fail on that: the modes missing a value
+  /// stay inactive until it is set.
+  public func validated(waivingModelRequirements waived: Bool = false) throws -> AppSettings {
     let trimmedModel = trimmed(llmModel)
     let trimmedLanguage = trimmed(translationTargetLanguage)
-    let llmModes: [Hotkey?] = [commandHotkey, translateHotkey, askHotkey]
+    let llmModes: [Hotkey?] =
+      [commandHotkey, translateHotkey, askHotkey] + customModes.map(\.hotkey)
 
     // Structural problems are reported before missing values. Binding two modes
     // to one chord while the language box happens to be empty is a collision,
@@ -314,7 +478,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
       throw AppSettingsValidationError.unusableHotkey
     }
 
-    if !privacyMode, translateHotkey != nil, trimmedLanguage.isEmpty {
+    guard customModes.allSatisfy(\.isComplete) else {
+      throw AppSettingsValidationError.incompleteCustomMode
+    }
+    // A blank model is valid: Codex then uses the subscription's default.
+    let requiresValues = !privacyMode && !waived
+    if requiresValues, translateHotkey != nil, trimmedLanguage.isEmpty {
       throw AppSettingsValidationError.emptyTargetLanguage
     }
     let trimmedTranscriptionModel = trimmed(openAITranscriptionModel)
@@ -328,6 +497,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     var validatedSettings = self
     validatedSettings.llmModel = trimmedModel
     validatedSettings.translationTargetLanguage = trimmedLanguage
+    validatedSettings.customInstructions = trimmed(customInstructions)
     validatedSettings.historyLimit = min(max(historyLimit, 1), 2_000)
     validatedSettings.openAITranscriptionModel = trimmedTranscriptionModel
     return validatedSettings
@@ -361,6 +531,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
     case translationTargetLanguage
     case askHotkey
     case askAlwaysOpensWindow
+    case speechModel
+    case customInstructions
+    case soundFeedback
+    case cleanupEngine
+    case livePreview
+    case customModes
   }
 
   /// Same rules as recording a shortcut in Settings, so a hand-edited or

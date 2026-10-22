@@ -1,32 +1,71 @@
 import MicAICore
 import SwiftUI
 
-struct SettingsView: View {
-  @ObservedObject var appModel: AppModel
+enum SettingsPane: String, CaseIterable, Identifiable {
+  case general
+  case customModes
+  case style
+  case vocabulary
+  case snippets
+  case privacy
 
-  var body: some View {
-    TabView {
-      GeneralSettingsView(appModel: appModel)
-        .tabItem { Label("General", systemImage: "gearshape") }
+  var id: Self { self }
 
-      StyleSettingsView(appModel: appModel)
-        .tabItem { Label("Style", systemImage: "wand.and.stars") }
-
-      VocabularySettingsView(appModel: appModel)
-        .tabItem { Label("Vocabulary", systemImage: "character.book.closed") }
-
-      PrivacySettingsView(appModel: appModel)
-        .tabItem { Label("Privacy", systemImage: "hand.raised") }
+  var title: String {
+    switch self {
+    case .general:
+      "General"
+    case .customModes:
+      "Custom Modes"
+    case .style:
+      "Style"
+    case .vocabulary:
+      "Vocabulary"
+    case .snippets:
+      "Snippets"
+    case .privacy:
+      "Privacy"
     }
-    .frame(width: 600, height: 780)
+  }
+
+  var symbol: String {
+    switch self {
+    case .general:
+      "gearshape"
+    case .customModes:
+      "sparkles"
+    case .style:
+      "textformat"
+    case .vocabulary:
+      "character.book.closed"
+    case .snippets:
+      "text.quote"
+    case .privacy:
+      "hand.raised"
+    }
+  }
+
+  /// Vocabulary and snippets save as you add them; the other panes edit a
+  /// draft that is validated as a whole, because a hotkey collision spans
+  /// fields no single toggle could check.
+  var usesDraft: Bool {
+    switch self {
+    case .general, .customModes, .style, .privacy:
+      true
+    case .vocabulary, .snippets:
+      false
+    }
   }
 }
 
-struct GeneralSettingsView: View {
+/// Settings, laid out like System Settings: a sidebar of panes, each a grouped
+/// form. One draft is shared across panes so switching panes never loses an
+/// edit, and one Save validates everything together.
+struct SettingsView: View {
   @ObservedObject var appModel: AppModel
   @ObservedObject private var store: SettingsStore
   @State private var draft: AppSettings
-  @Environment(\.dismiss) private var dismiss
+  @State private var pane: SettingsPane? = .general
 
   init(appModel: AppModel) {
     self.appModel = appModel
@@ -35,262 +74,296 @@ struct GeneralSettingsView: View {
   }
 
   var body: some View {
-    VStack(spacing: 0) {
-      Form {
-        Section("Dictation") {
-          HotkeyRecorderField(
-            title: "Hotkey",
-            hotkey: Binding(
-              get: { draft.dictationHotkey },
-              set: { if let hotkey = $0 { draft.dictationHotkey = hotkey } }
-            ),
-            allowsNone: false
-          )
-
-          Picker(
-            "Activation",
-            selection: $draft.dictationActivationMode
-          ) {
-            ForEach(DictationActivationMode.allCases, id: \.self) { mode in
-              Text(mode.displayName).tag(mode)
-            }
+    NavigationSplitView {
+      List(SettingsPane.allCases, selection: $pane) { pane in
+        Label(pane.title, systemImage: pane.symbol)
+          .tag(pane)
+      }
+      .navigationSplitViewColumnWidth(190)
+      .toolbar(removing: .sidebarToggle)
+      .safeAreaInset(edge: .bottom) {
+        SidebarStatus(appModel: appModel)
+      }
+    } detail: {
+      detail
+        .navigationTitle((pane ?? .general).title)
+        .safeAreaInset(edge: .bottom) {
+          if (pane ?? .general).usesDraft {
+            saveBar
           }
         }
+    }
+    .frame(minWidth: 760, minHeight: 560)
+    .onAppear { draft = store.settings }
+  }
 
-        Section("AI Commands") {
-          HotkeyRecorderField(title: "Hotkey", hotkey: $draft.commandHotkey)
-          TextField(
-            "Codex model override",
-            text: $draft.llmModel,
-            prompt: Text("Optional — blank uses your Codex default")
-          )
-          Text(
-            "This override applies to all AI text tasks. Use a text model; audio transcription has its own model setting."
-          )
-          .font(.caption)
+  @ViewBuilder
+  private var detail: some View {
+    switch pane ?? .general {
+    case .general:
+      GeneralSettingsPane(appModel: appModel, draft: $draft)
+    case .customModes:
+      CustomModesSettingsPane(appModel: appModel, draft: $draft)
+    case .style:
+      StyleSettingsPane(appModel: appModel, draft: $draft)
+    case .vocabulary:
+      VocabularySettingsPane(appModel: appModel)
+    case .snippets:
+      SnippetsSettingsPane(appModel: appModel)
+    case .privacy:
+      PrivacySettingsPane(appModel: appModel, draft: $draft)
+    }
+  }
+
+  private var saveBar: some View {
+    HStack(spacing: 10) {
+      if let message = store.validationMessage {
+        Label(message, systemImage: "exclamationmark.triangle.fill")
+          .foregroundStyle(.red)
+          .font(.callout)
+      } else if draft != store.settings {
+        Text("Unsaved changes")
+          .font(.callout)
           .foregroundStyle(.secondary)
-          LabeledContent("Provider", value: appModel.providerStatus.summary)
-        }
-
-        Section("AI Translate") {
-          HotkeyRecorderField(title: "Hotkey", hotkey: $draft.translateHotkey)
-          TextField(
-            "Translate into",
-            text: $draft.translationTargetLanguage,
-            prompt: Text("Spanish")
-          )
-          Text(
-            "With text selected, the selection is translated in place. With nothing "
-              + "selected, what you say is translated and inserted. Speech is "
-              + "recognized in English on device; the selection can be any language."
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        }
-
-        Section("Ask AI") {
-          HotkeyRecorderField(title: "Hotkey", hotkey: $draft.askHotkey)
-          Toggle("Always open answers in a window", isOn: $draft.askAlwaysOpensWindow)
-          Text(
-            "Ask a question and the answer opens in a window. Say something that is "
-              + "not a question and it is typed at your cursor instead. Any selected "
-              + "text is used as context and is never overwritten."
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        }
-
-        Section("Readiness") {
-          SettingsStatusRow(
-            title: "Microphone",
-            ready: appModel.microphonePermission.isGranted,
-            readyText: "Allowed",
-            blockedText: "Required",
-            actionTitle: appModel.microphonePermission.status == .undetermined
-              ? "Request Access…" : "Open Settings…"
-          ) {
-            if appModel.microphonePermission.status == .undetermined {
-              appModel.requestMicrophonePermission()
-            } else {
-              appModel.microphonePermission.openSystemSettings()
-            }
-          }
-
-          SettingsStatusRow(
-            title: "Accessibility",
-            ready: appModel.accessibilityPermission.isTrusted,
-            readyText: "Allowed",
-            blockedText: "Required",
-            actionTitle: "Request Access…"
-          ) {
-            appModel.requestAccessibilityPermission()
-          }
-
-          LabeledContent("Local speech model") {
-            HStack(spacing: 10) {
-              Text(modelStatus)
-              if case .preparing(let fraction, _) = appModel.modelState {
-                ProgressView(value: fraction)
-                  .frame(width: 90)
-                  .accessibilityLabel("Speech model preparation")
-              } else if appModel.modelState != .ready {
-                Button("Prepare") {
-                  appModel.prepareModel()
-                }
-              }
-            }
-          }
-        }
-
-        Section("System") {
-          Toggle(
-            "Launch MicAI at login",
-            isOn: Binding(
-              get: { appModel.launchAtLogin.isEnabled },
-              set: { appModel.launchAtLogin.setEnabled($0) }
-            )
-          )
-          LabeledContent("Login item", value: appModel.launchAtLogin.status.label)
-          if let launchError = appModel.launchAtLogin.errorMessage {
-            Label {
-              Text(launchError)
-            } icon: {
-              Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(MicAIStatusColor.danger)
-            }
-          }
-        }
-
-        if let validationMessage = store.validationMessage {
-          Label {
-            Text(validationMessage)
-          } icon: {
-            Image(systemName: "exclamationmark.triangle.fill")
-              .foregroundStyle(MicAIStatusColor.danger)
-          }
+      }
+      Spacer()
+      Button("Revert") {
+        draft = store.settings
+      }
+      .disabled(draft == store.settings)
+      Button("Save") {
+        if store.save(draft) {
+          draft = store.settings
+          appModel.applySettings()
         }
       }
-      .formStyle(.grouped)
-      .scenePadding()
-
-      Divider()
-      MicAIActionCluster {
-        HStack {
-          Button("Run Setup Again", systemImage: "checklist") {
-            appModel.showOnboarding()
-            dismiss()
-            MainWindowPresenter.show()
-          }
-          .micAISecondaryButtonStyle()
-          .disabled(hasUnsavedChanges)
-          .help(
-            hasUnsavedChanges
-              ? "Save or discard your settings changes before running setup again"
-              : "Open the guided MicAI setup"
-          )
-
-          Spacer()
-          if hasUnsavedChanges {
-            Text("Unsaved changes")
-              .font(.callout)
-              .foregroundStyle(.secondary)
-          }
-          Button("Revert", systemImage: "arrow.uturn.backward") {
-            draft = store.settings
-            store.discardValidation()
-          }
-          .micAISecondaryButtonStyle()
-          .disabled(!hasUnsavedChanges)
-          .help("Discard unsaved settings changes")
-
-          Button("Save", systemImage: "checkmark") {
-            if store.save(draft) {
-              draft = store.settings
-              appModel.applySettings()
-            }
-          }
-          .micAIPrimaryButtonStyle()
-          .keyboardShortcut(.defaultAction)
-          .disabled(
-            !hasUnsavedChanges || !isDraftValid || !appModel.canApplySettings
-          )
-          .help(
-            saveHelp
-          )
-        }
-      }
-      .padding(16)
-      .background(.bar)
+      .keyboardShortcut(.defaultAction)
+      .disabled(draft == store.settings)
     }
-    .onAppear {
-      draft = store.settings
-    }
+    .padding(.horizontal, 20)
+    .padding(.vertical, 12)
+    .background(.bar)
   }
-
-  private var hasUnsavedChanges: Bool {
-    draft != store.settings
-  }
-
-  private var isDraftValid: Bool {
-    (try? draft.validated()) != nil
-  }
-
-  private var saveHelp: String {
-    if !hasUnsavedChanges {
-      return "Change a setting before saving"
-    }
-    if !appModel.canApplySettings {
-      return "Finish or cancel the current operation before saving"
-    }
-    if !isDraftValid {
-      return "Resolve the validation message before saving"
-    }
-    return "Save MicAI settings"
-  }
-
-  private var modelStatus: String {
-    switch appModel.modelState {
-    case .notDownloaded:
-      "Not prepared"
-    case .preparing(_, let phase):
-      phase
-    case .ready:
-      "Ready"
-    case .failed:
-      "Preparation failed"
-    }
-  }
-
 }
 
-private struct SettingsStatusRow: View {
-  let title: String
-  let ready: Bool
-  let readyText: String
-  let blockedText: String
-  let actionTitle: String
-  let action: () -> Void
+/// "Ready · speech model on this Mac", at the foot of the sidebar.
+private struct SidebarStatus: View {
+  @ObservedObject var appModel: AppModel
 
   var body: some View {
-    LabeledContent(title) {
-      HStack {
-        Label {
-          Text(ready ? readyText : blockedText)
-        } icon: {
-          Image(
-            systemName: ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
-          )
-          .foregroundStyle(ready ? MicAIStatusColor.ready : MicAIStatusColor.attention)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-          "\(title): \(ready ? readyText : blockedText)"
+    let ready = appModel.readiness.dictation.isReady
+    HStack(spacing: 7) {
+      Circle()
+        .fill(ready ? Color.green : Color.red)
+        .frame(width: 7, height: 7)
+      Text(ready ? "Ready · speech on this Mac" : "Setup needed")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      Spacer()
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 10)
+  }
+}
+
+// MARK: - General
+
+struct GeneralSettingsPane: View {
+  @ObservedObject var appModel: AppModel
+  @Binding var draft: AppSettings
+
+  var body: some View {
+    Form {
+      Section {
+        ShortcutRow(
+          mode: .dictation,
+          selection: Binding(
+            get: { draft.dictationHotkey },
+            set: { if let value = $0 { draft.dictationHotkey = value } }
+          ),
+          options: Self.dictationHotkeys,
+          allowsOff: false
         )
-        if !ready {
-          Button(actionTitle, action: action)
-            .accessibilityHint("Opens the recovery action for \(title).")
+        Picker("Activation", selection: $draft.dictationActivationMode) {
+          ForEach(DictationActivationMode.allCases, id: \.self) { mode in
+            Text(mode.displayName).tag(mode)
+          }
+        }
+        .pickerStyle(.segmented)
+        ShortcutRow(
+          mode: .command,
+          selection: $draft.commandHotkey,
+          options: Self.commandHotkeys,
+          allowsOff: true
+        )
+        ShortcutRow(
+          mode: .translate,
+          selection: $draft.translateHotkey,
+          options: Self.translateHotkeys,
+          allowsOff: true
+        )
+        ShortcutRow(
+          mode: .ask,
+          selection: $draft.askHotkey,
+          options: Self.askHotkeys,
+          allowsOff: true
+        )
+      } header: {
+        Text("Shortcuts")
+      } footer: {
+        Text(activationHint)
+      }
+
+      Section("Speech recognition") {
+        Picker("Model", selection: $draft.speechModel) {
+          ForEach(SpeechModelChoice.allCases, id: \.self) { choice in
+            VStack(alignment: .leading, spacing: 2) {
+              Text(choice.displayName)
+              Text(choice.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .tag(choice)
+          }
+        }
+        .pickerStyle(.radioGroup)
+        LabeledContent("Status") {
+          ModelStatusView(state: appModel.modelState, prepare: appModel.prepareModel)
+        }
+        Toggle("Show words while you speak", isOn: $draft.livePreview)
+        Toggle("Play sounds when recording starts and finishes", isOn: $draft.soundFeedback)
+      }
+
+      Section {
+        LabeledContent("Provider", value: "ChatGPT, through the Codex CLI")
+        TextField("Model", text: $draft.llmModel, prompt: Text("Codex default"))
+        Text(
+          "This override applies to all AI text tasks. Use a text model; audio transcription has its own model setting."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        TextField(
+          "Translate into",
+          text: $draft.translationTargetLanguage,
+          prompt: Text("Spanish")
+        )
+        Toggle("Always open Ask AI answers in a window", isOn: $draft.askAlwaysOpensWindow)
+        LabeledContent("Status", value: appModel.providerStatus.summary)
+      } header: {
+        Text("Language model")
+      } footer: {
+        Text(providerFooter)
+      }
+
+      Section("Readiness") {
+        ReadinessRow(
+          title: "Microphone",
+          ready: appModel.microphonePermission.isGranted,
+          readyText: "Allowed",
+          blockedText: "Required"
+        ) {
+          if appModel.microphonePermission.status == .undetermined {
+            appModel.requestMicrophonePermission()
+          } else {
+            appModel.microphonePermission.openSystemSettings()
+          }
+        }
+        ReadinessRow(
+          title: "Accessibility",
+          ready: appModel.accessibilityPermission.isTrusted,
+          readyText: "Allowed",
+          blockedText: "Required"
+        ) {
+          appModel.requestAccessibilityPermission()
+        }
+        Toggle(
+          "Launch MicAI at login",
+          isOn: Binding(
+            get: { appModel.launchAtLogin.isEnabled },
+            set: { appModel.launchAtLogin.setEnabled($0) }
+          )
+        )
+        if let launchError = appModel.launchAtLogin.errorMessage {
+          Text(launchError)
+            .foregroundStyle(.red)
+        }
+        Button("Run Setup Again…") {
+          appModel.showOnboarding()
         }
       }
+    }
+    .formStyle(.grouped)
+  }
+
+  private var activationHint: String {
+    switch draft.dictationActivationMode {
+    case .hold:
+      "Hold the dictation key while you speak. Command, Translate and Ask AI are always "
+        + "hold-to-talk."
+    case .toggle:
+      "Press the dictation key once to start and again to stop."
+    case .hybrid:
+      "Hold the dictation key to talk, or tap it once to keep recording hands-free until "
+        + "you press it again."
+    }
+  }
+
+  private var providerFooter: String {
+    "AI features run through the Codex CLI you are signed in to. MicAI never reads its "
+      + "credentials. Leave the model blank to use your Codex default."
+  }
+
+  static let dictationHotkeys: [Hotkey] = [.rightOption, .controlOptionSpace, .commandShiftSpace]
+  static let commandHotkeys: [Hotkey] = [.controlOptionSpace, .commandShiftSpace]
+  static let translateHotkeys: [Hotkey] = [
+    .controlOptionT,
+    .commandShiftSpace,
+    .controlOptionSpace,
+  ]
+  static let askHotkeys: [Hotkey] = [.controlOptionA, .commandShiftSpace, .controlOptionSpace]
+}
+
+/// A mode's name, what it does, and its shortcut drawn as keycaps that open a
+/// menu of the supported choices.
+private struct ShortcutRow: View {
+  let mode: MicAIMode
+  @Binding var selection: Hotkey?
+  let options: [Hotkey]
+  let allowsOff: Bool
+
+  var body: some View {
+    HStack(spacing: 10) {
+      ModeDot(mode: mode)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(mode.shortName)
+        Text(mode.summary)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      Spacer()
+      Menu {
+        Picker(mode.shortName, selection: $selection) {
+          if allowsOff {
+            Text("Off").tag(Hotkey?.none)
+          }
+          ForEach(options, id: \.self) { hotkey in
+            Text(hotkey.displayName).tag(Hotkey?.some(hotkey))
+          }
+        }
+        .pickerStyle(.inline)
+        .labelsHidden()
+      } label: {
+        if let selection {
+          KeyCaps(selection)
+        } else {
+          Text("Off")
+            .foregroundStyle(.secondary)
+        }
+      }
+      .menuStyle(.button)
+      .buttonStyle(.borderless)
+      .fixedSize()
+      .accessibilityLabel("\(mode.shortName) shortcut")
     }
   }
 }

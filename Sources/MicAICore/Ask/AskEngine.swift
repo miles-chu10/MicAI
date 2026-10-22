@@ -20,9 +20,12 @@ public struct AskResult: Sendable, Equatable {
     self.usedSelection = usedSelection
   }
 
-  /// How the answer reaches the user when it is not going to a window.
+  /// How the answer reaches the user when it is not going to a window. With a
+  /// selection as context it goes after the selection: the selected text is
+  /// still selected when the answer arrives, and a plain paste would replace
+  /// what the user only asked about.
   public var insertionIntent: InsertionIntent {
-    .insert(answer)
+    usedSelection ? .insertAfterSelection(answer) : .insert(answer)
   }
 }
 

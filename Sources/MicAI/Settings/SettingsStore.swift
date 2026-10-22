@@ -26,9 +26,14 @@ final class SettingsStore: ObservableObject {
   }
 
   @discardableResult
-  func save(_ candidate: AppSettings? = nil) -> Bool {
+  func save(
+    _ candidate: AppSettings? = nil,
+    waivingModelRequirements waived: Bool = false
+  ) -> Bool {
     do {
-      let validatedSettings = try (candidate ?? settings).validated()
+      let validatedSettings = try (candidate ?? settings).validated(
+        waivingModelRequirements: waived
+      )
       let data = try JSONEncoder().encode(validatedSettings)
       defaults.set(data, forKey: storageKey)
       settings = validatedSettings

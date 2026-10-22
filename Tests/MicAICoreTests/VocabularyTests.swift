@@ -25,6 +25,27 @@ struct VocabularyApplierTests {
   }
 
   @Test
+  func termsThatStartOrEndInSymbolsStillMatch() {
+    let entries = [
+      VocabularyEntry(heard: "c++", written: "C++"),
+      VocabularyEntry(heard: ".net", written: ".NET"),
+    ]
+    let result = applier.apply("i write c++ and .net code", entries: entries)
+
+    #expect(result.text == "i write C++ and .NET code")
+    #expect(result.appliedEntryIDs.count == 2)
+  }
+
+  @Test
+  func symbolTermsStillRespectNeighbouringWords() {
+    let entries = [VocabularyEntry(heard: "c++", written: "C++")]
+    let result = applier.apply("abc++ is not it", entries: entries)
+
+    #expect(result.text == "abc++ is not it")
+    #expect(result.appliedEntryIDs.isEmpty)
+  }
+
+  @Test
   func longerPhraseWinsOverItsOwnPrefix() {
     let entries = [
       VocabularyEntry(heard: "micro AI", written: "MicAI"),

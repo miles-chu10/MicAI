@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import MicAICore
@@ -12,6 +13,18 @@ final class AppModel: ObservableObject {
   @Published private(set) var providerStatus: ProviderStatus = .notConfigured
   @Published private(set) var historyEntries: [HistoryEntry] = []
   @Published private(set) var vocabularyEntries: [VocabularyEntry] = []
+  @Published private(set) var snippetEntries: [Snippet] = []
+  /// The text MicAI last put somewhere: inserted, or shown as an answer. What
+  /// "Paste Last Result" pastes again.
+  @Published private(set) var lastResult: String?
+  /// The mode of the operation in flight, for the HUD and the menu bar icon.
+  @Published private(set) var operationMode: MicAIMode?
+  /// True after a quick tap in "Hold or tap" mode: recording continues until
+  /// the next press.
+  @Published private(set) var isHandsFree = false
+  /// A rough transcript of what has been said so far, while recording with
+  /// live preview on. Never what gets inserted.
+  @Published private(set) var livePartial: String?
   /// Tone applied to the most recent dictation, shown in the HUD and history.
   @Published private(set) var lastTone: StyleTone?
   /// Release-to-insertion timings for this session, in memory only.
@@ -36,23 +49,34 @@ final class AppModel: ObservableObject {
   private let providerStatusRelay: ProviderStatusRelay
   private let codexCLIAvailable: Bool
   private let vocabularyStore: VocabularyStore
+  private let snippetStore: SnippetStore
   private let historyStore: TranscriptHistoryStore
   private let composer: DictationComposer
   private let translationEngine: TranslationEngine
   private let askEngine: AskEngine
+  private let customModeEngine: CustomModeEngine
+  /// Set when a custom mode's shortcut is pressed, and read when its
+  /// operation starts.
+  private var pendingCustomModeID: UUID?
+  /// The custom mode the running operation belongs to, captured when it
+  /// starts, so editing Settings mid-dictation cannot change what it does.
+  private var operationCustomMode: CustomMode?
   private var operationID: UUID?
   private var operationAttemptID: UUID?
   private var operationStartupMode: MicAIMode?
   private var pendingStopMode: MicAIMode?
-  @Published private(set) var operationMode: MicAIMode?
   private var operationTarget: TargetIdentity?
+  /// A speech model chosen while an operation was running. Switching then
+  /// would unload the recognizer the recording is about to need, so the
+  /// switch waits until the operation ends.
+  private var deferredSpeechModel: SpeechModelChoice?
   private var cancellables: Set<AnyCancellable> = []
   private var timingRecorder = PhaseTimingRecorder()
 
   private lazy var hotkeyMonitor = GlobalHotkeyMonitor(
     settings: settingsStore.settings,
-    actionHandler: { [weak self] mode, action in
-      self?.handleHotkey(mode: mode, action: action)
+    actionHandler: { [weak self] binding, action in
+      self?.handleHotkey(binding: binding, action: action)
     },
     cancelHandler: { [weak self] in
       self?.cancelCurrentOperation()
@@ -62,7 +86,7 @@ final class AppModel: ObservableObject {
   init() {
     let settingsStore = SettingsStore()
     let coordinator = OperationCoordinator()
-    let recognizer = FluidAudioRecognizer()
+    let recognizer = FluidAudioRecognizer(model: settingsStore.settings.speechModel)
     let targetTracker = TargetApplicationTracker()
     let providerStatusRelay = ProviderStatusRelay()
     let codexExecutableURL = CodexCLIClient.locateExecutable()
@@ -92,8 +116,8 @@ final class AppModel: ObservableObject {
       directInserter: targetTracker,
       clipboardFallback: clipboardInsertionCoordinator
     )
-    // One client for commands, refinement, translate and ask, so a provider
-    // status seen by one path is the status every path reports.
+    // One client for every AI path, so a provider status seen by one path is
+    // the status every path reports.
     let llmClient = CodexCLIClient(
       executableURL: codexExecutableURL,
       statusHandler: providerStatusRelay.send,
@@ -122,18 +146,30 @@ final class AppModel: ObservableObject {
           .appendingPathComponent("MicAI-history.json"),
         limit: settingsStore.settings.historyLimit
       )
+    let snippetStore =
+      (try? SnippetStore.applicationSupport())
+      ?? SnippetStore(
+        file: FileManager.default.temporaryDirectory
+          .appendingPathComponent("MicAI-snippets.json")
+      )
     self.vocabularyStore = vocabularyStore
     self.historyStore = historyStore
+    self.snippetStore = snippetStore
     composer = DictationComposer(
       refiner: RefinementEngine(transformer: llmClient),
       vocabulary: vocabularyStore,
-      history: historyStore
+      history: historyStore,
+      snippets: snippetStore,
+      onDeviceRefiner: OnDeviceLanguageModel.makeTransformer().map {
+        RefinementEngine(transformer: $0)
+      }
     )
     // Both take their per-call settings as arguments: they run off the main
     // actor inside CommandPipeline, so the values are read on the main actor at
     // the call site and passed down.
     translationEngine = TranslationEngine(transformer: llmClient)
     askEngine = AskEngine(transformer: llmClient)
+    customModeEngine = CustomModeEngine(transformer: llmClient)
     isOnboardingPresented = !settingsStore.hasSeenOnboarding
     let observedPublishers = [
       settingsStore.objectWillChange.eraseToAnyPublisher(),
@@ -155,16 +191,7 @@ final class AppModel: ObservableObject {
         self?.observeForMetrics(phase)
       }
       .store(in: &cancellables)
-    Publishers.CombineLatest4($operationMode, $operationPhase, $inputLevel, $errorMessage)
-      .sink { [weak self] mode, phase, level, message in
-        self?.hudController.update(
-          mode: mode,
-          phase: phase,
-          level: level,
-          message: message
-        )
-      }
-      .store(in: &cancellables)
+    bindHUD()
     providerStatusRelay.setHandler { [weak self] status in
       Task { @MainActor [weak self] in
         self?.providerStatus = status
@@ -279,8 +306,201 @@ final class AppModel: ObservableObject {
   }
 
   func applySettings() {
-    hotkeyMonitor.update(settings: settingsStore.settings)
+    let settings = settingsStore.settings
+    // Privacy mode stops a network mode that is already recording or waiting
+    // on the model, not only the next one: otherwise releasing the key after
+    // the toggle would still send the selection and transcript out.
+    if settings.privacyMode, let mode = operationMode, mode != .dictation {
+      Task {
+        await abandonSelectionMode(mode, reason: .llmForbidden)
+      }
+    }
+    hotkeyMonitor.update(settings: settings)
+    switchSpeechModelIfNeeded(to: settings.speechModel)
     refreshProviderStatus()
+    applyHistorySettings(settings)
+  }
+
+  /// The store is built once at launch, so a new limit is pushed to it here.
+  /// Turning history off deletes what was kept: with nothing new recorded,
+  /// the old entries would otherwise stay on disk and in usage statistics.
+  private func applyHistorySettings(_ settings: AppSettings) {
+    let historyStore = self.historyStore
+    Task { @MainActor in
+      await historyStore.setLimit(settings.historyLimit)
+      if !settings.historyEnabled {
+        await historyStore.clear()
+      }
+      await refreshStoredCollections()
+    }
+  }
+
+  /// Loads the newly chosen recognizer. Instant when it is already cached;
+  /// otherwise the status returns to "not prepared" so Settings offers the
+  /// download instead of dictation failing on a model that is not there.
+  private func switchSpeechModelIfNeeded(to choice: SpeechModelChoice) {
+    guard !isOperationActive else {
+      deferredSpeechModel = choice
+      return
+    }
+    deferredSpeechModel = nil
+    let recognizer = self.recognizer
+    Task { @MainActor in
+      guard await recognizer.model != choice else {
+        return
+      }
+      await recognizer.select(choice)
+      modelState = .notDownloaded
+      await prepareCachedModelIfAvailable()
+    }
+  }
+
+  func setPrivacyMode(_ enabled: Bool) {
+    var settings = settingsStore.settings
+    settings.privacyMode = enabled
+    if settingsStore.save(settings) {
+      applySettings()
+      return
+    }
+    // Privacy mode lets AI shortcuts be saved without a model or language, so
+    // turning it off can fail validation. The toggle must still work: save
+    // with those requirements waived, leave the modes that lack a value off,
+    // and say what is missing.
+    let missing = settingsStore.validationMessage
+    guard !enabled, settingsStore.save(settings, waivingModelRequirements: true) else {
+      return
+    }
+    applySettings()
+    errorMessage = missing
+  }
+
+  /// AI text tasks always go to ChatGPT through the signed-in Codex CLI.
+  var providerName: String {
+    "ChatGPT"
+  }
+
+  // MARK: - Last result
+
+  func copyLastResult() {
+    guard let lastResult else {
+      return
+    }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(lastResult, forType: .string)
+  }
+
+  /// Pastes the last result into whatever has focus now. For the dictation that
+  /// went into the wrong window: switch to the right one and paste it again.
+  func pasteLastResult() {
+    guard let text = lastResult, !isOperationActive else {
+      return
+    }
+    accessibilityPermission.refresh()
+    guard accessibilityPermission.isTrusted else {
+      errorMessage = MicAIError.accessibilityDenied.localizedDescription
+      return
+    }
+    let targetTracker = self.targetTracker
+    let insertionCoordinator = self.insertionCoordinator
+    Task { @MainActor in
+      guard let target = await targetTracker.capture() else {
+        return
+      }
+      do {
+        try await insertionCoordinator.apply(.insert(text), to: target, while: { true })
+      } catch {
+        errorMessage = (error as? MicAIError)?.localizedDescription
+      }
+      await targetTracker.release(target)
+    }
+  }
+
+  // MARK: - Usage
+
+  func usage(since start: Date? = nil) -> UsageStats {
+    UsageStats(entries: historyEntries, since: start)
+  }
+
+  // MARK: - HUD
+
+  private func bindHUD() {
+    let hud = hudController.model
+    $operationMode
+      .compactMap { $0 }
+      .sink { hud.mode = $0 }
+      .store(in: &cancellables)
+    $isHandsFree
+      .sink { hud.isHandsFree = $0 }
+      .store(in: &cancellables)
+    $errorMessage
+      .sink { hud.message = $0 }
+      .store(in: &cancellables)
+    $inputLevel
+      .sink { hud.push(level: $0) }
+      .store(in: &cancellables)
+    $livePartial
+      .sink { hud.partialText = $0 }
+      .store(in: &cancellables)
+    $operationPhase
+      .removeDuplicates()
+      .sink { [weak self] phase in
+        guard let self else {
+          return
+        }
+        hud.providerName = providerName
+        hud.polishesOnDevice = settingsStore.settings.refinementRoute == .onDevice
+        hud.detail = hudDetail()
+        let previous = hud.phase
+        hud.phase = phase
+        guard settingsStore.settings.soundFeedback else {
+          return
+        }
+        if phase == .recording, previous != .recording {
+          SoundFeedback.started()
+        } else if case .failed = phase {
+          SoundFeedback.failed()
+        }
+      }
+      .store(in: &cancellables)
+  }
+
+  /// Delivers live preview text to the HUD, or nil when live preview is off.
+  private func partialsHandler() -> (@Sendable (String) -> Void)? {
+    guard settingsStore.settings.livePreview else {
+      return nil
+    }
+    return { [weak self] text in
+      Task { @MainActor in
+        self?.livePartial = text
+      }
+    }
+  }
+
+  /// The qualifier the HUD shows beside the mode: the tone MicAI will write in
+  /// for dictation, the destination language for Translate.
+  private func hudDetail() -> String? {
+    let settings = settingsStore.settings
+    switch operationMode {
+    case .dictation:
+      guard settings.refinementRoute != nil else {
+        return nil
+      }
+      let tone = settings.resolver().tone(for: operationTarget)
+      if let name = operationTarget?.applicationName {
+        return "\(tone.displayName), for \(name)"
+      }
+      return tone.displayName
+    case .translate:
+      return "to \(settings.translationTargetLanguage)"
+    case .custom:
+      return operationCustomMode?.name
+    case .command:
+      return nil
+    case .ask:
+      return nil
+    case nil:
+      return nil
+    }
   }
 
   func refreshSystemStatus() {
@@ -310,14 +530,33 @@ final class AppModel: ObservableObject {
     isOnboardingPresented = false
   }
 
+  private func handleHotkey(binding: HotkeyBindingID, action: HotkeyAction) {
+    switch binding {
+    case .mode(let mode):
+      handleHotkey(mode: mode, action: action)
+    case .custom(let id):
+      if action == .startRecording {
+        pendingCustomModeID = id
+      }
+      handleHotkey(mode: .custom, action: action)
+    }
+  }
+
   private func handleHotkey(mode: MicAIMode, action: HotkeyAction) {
     if action == .stopRecording, operationStartupMode == mode {
       pendingStopMode = mode
       return
     }
 
+    if action == .lockRecording {
+      isHandsFree = true
+      return
+    }
+
     Task {
       switch (mode, action) {
+      case (_, .lockRecording):
+        break
       case (.dictation, .startRecording):
         await startDictation()
       case (.dictation, .stopRecording):
@@ -325,7 +564,7 @@ final class AppModel: ObservableObject {
       case (.dictation, .cancelRecording):
         await cancelDictation()
       case (.command, .startRecording), (.translate, .startRecording),
-        (.ask, .startRecording):
+        (.ask, .startRecording), (.custom, .startRecording):
         await discardDictationStartedByChord()
         await startSelectionMode(mode)
       case (.command, .stopRecording):
@@ -334,8 +573,10 @@ final class AppModel: ObservableObject {
         await finishTranslate()
       case (.ask, .stopRecording):
         await finishAsk()
+      case (.custom, .stopRecording):
+        await finishCustom()
       case (.command, .cancelRecording), (.translate, .cancelRecording),
-        (.ask, .cancelRecording):
+        (.ask, .cancelRecording), (.custom, .cancelRecording):
         await cancelSelectionMode(mode)
       }
     }
@@ -418,7 +659,8 @@ final class AppModel: ObservableObject {
           if !accepted {
             await coordinator.cancel(operationID: operationID)
           }
-        }
+        },
+        partials: partialsHandler()
       )
       guard operationAttemptID == attemptID else {
         return
@@ -456,7 +698,7 @@ final class AppModel: ObservableObject {
       let transcript = try await pipeline.finish(operationID: operationID)
 
       let settings = settingsStore.settings
-      if settings.isRefinementActive,
+      if settings.refinementRoute != nil,
         await coordinator.markAwaitingLLM(operationID: operationID)
       {
         operationPhase = .awaitingLLM
@@ -511,6 +753,7 @@ final class AppModel: ObservableObject {
         guard await coordinator.complete(operationID: operationID) else {
           throw MicAIError.cancelled
         }
+        await recordDictationHistory(composed)
         complete(composed: composed, diagnostic: error.localizedDescription)
         return
       }
@@ -518,6 +761,7 @@ final class AppModel: ObservableObject {
       guard await coordinator.complete(operationID: operationID) else {
         throw MicAIError.cancelled
       }
+      await recordDictationHistory(composed)
       complete(composed: composed)
     } catch {
       let micAIError = (error as? MicAIError) ?? .insertionFailed
@@ -533,6 +777,13 @@ final class AppModel: ObservableObject {
       operationPhase = .failed(micAIError)
       clearOperation()
     }
+  }
+
+  /// Only after the text went in, so History never lists a dictation that was
+  /// cancelled or failed to insert.
+  private func recordDictationHistory(_ composed: ComposedDictation) async {
+    await composer.recordHistory(for: composed)
+    await refreshStoredCollections()
   }
 
   private func cancelDictation() async {
@@ -551,12 +802,10 @@ final class AppModel: ObservableObject {
     errorMessage = nil
     inputLevel = 0
     clearOperation()
-    hudController.update(
-      mode: mode,
-      phase: .failed(.cancelled),
-      level: 0,
-      message: nil
-    )
+    let hud = hudController.model
+    hud.mode = mode
+    hud.message = "Nothing was inserted"
+    hud.phase = .failed(.cancelled)
   }
 
   /// Shared preamble for AI Commands, AI Translate and Ask AI.
@@ -573,6 +822,12 @@ final class AppModel: ObservableObject {
     operationAttemptID = attemptID
     let commandSettings = settingsStore.settings
     operationStartupMode = mode
+    if mode == .custom {
+      operationCustomMode = pendingCustomModeID.flatMap {
+        settingsStore.settings.customMode(id: $0)
+      }
+      pendingCustomModeID = nil
+    }
     guard isActive(mode) else {
       rejectStart(mode: mode, with: startBlocker(for: mode))
       clearOperation(ifAttemptID: attemptID)
@@ -637,7 +892,8 @@ final class AppModel: ObservableObject {
           if !accepted {
             await coordinator.cancel(operationID: operationID)
           }
-        }
+        },
+        partials: partialsHandler()
       )
       guard operationAttemptID == attemptID else {
         return
@@ -680,6 +936,9 @@ final class AppModel: ObservableObject {
 
   private func finishAsk() async {
     guard let operationID, let target = operationTarget else {
+      return
+    }
+    guard await isStillActive(.ask) else {
       return
     }
 
@@ -727,6 +986,7 @@ final class AppModel: ObservableObject {
           answer: result.answer,
           usedSelection: result.usedSelection
         )
+        lastResult = result.answer
         complete(transcript: produced.instruction)
         return
       }
@@ -744,6 +1004,78 @@ final class AppModel: ObservableObject {
     }
   }
 
+  /// Runs the custom mode captured at start: insert it, or show it in the
+  /// answer window without touching the document.
+  private func finishCustom() async {
+    guard let operationID, let target = operationTarget, let mode = operationCustomMode else {
+      return
+    }
+    guard await isStillActive(.custom) else {
+      return
+    }
+
+    operationPhase = .transcribing
+    inputLevel = 0
+    do {
+      let appModel = self
+      let engine = customModeEngine
+      let model = settingsStore.settings.llmModel
+      let produced = try await commandPipeline.finish(
+        operationID: operationID,
+        worksOnSelectionAlone: true,
+        awaitingLLM: {
+          await MainActor.run { appModel.operationPhase = .awaitingLLM }
+        },
+        produce: { spokenText, selectedText in
+          try await engine.run(
+            mode,
+            spokenText: spokenText,
+            selectedText: selectedText,
+            model: model
+          )
+        }
+      )
+      let result = produced.value
+
+      guard result.output == .window else {
+        try await insert(
+          result.insertionIntent,
+          operationID: operationID,
+          target: target,
+          mode: .custom,
+          spoken: produced.instruction,
+          output: result.text
+        )
+        return
+      }
+      guard await coordinator.markInserting(operationID: operationID),
+        await coordinator.complete(operationID: operationID)
+      else {
+        throw MicAIError.cancelled
+      }
+      await recordSelectionHistory(
+        mode: .custom,
+        spoken: produced.instruction,
+        output: result.text,
+        target: target
+      )
+      var usedSelection = false
+      if case .replaceSelection = result.insertionIntent {
+        usedSelection = true
+      }
+      pendingAnswer = AskAnswer(
+        question: produced.instruction.text,
+        answer: result.text,
+        usedSelection: usedSelection,
+        modeName: mode.name
+      )
+      lastResult = result.text
+      complete(transcript: produced.instruction)
+    } catch {
+      await failSelectionMode(operationID: operationID, error: error)
+    }
+  }
+
   /// Shared tail for the modes that end in an insertion: transcribe, transform,
   /// insert, record history.
   private func runSelectionInsertion(
@@ -751,6 +1083,9 @@ final class AppModel: ObservableObject {
     produce: @escaping @Sendable (String, String?, String) async throws -> InsertionIntent
   ) async {
     guard let operationID, let target = operationTarget else {
+      return
+    }
+    guard await isStillActive(mode) else {
       return
     }
 
@@ -761,6 +1096,7 @@ final class AppModel: ObservableObject {
       let model = settingsStore.settings.llmModel
       let produced = try await commandPipeline.finish(
         operationID: operationID,
+        worksOnSelectionAlone: mode == .translate,
         awaitingLLM: {
           await MainActor.run { appModel.operationPhase = .awaitingLLM }
         },
@@ -815,6 +1151,7 @@ final class AppModel: ObservableObject {
       throw MicAIError.cancelled
     }
     providerStatus = .readyToAttempt
+    lastResult = output
     await recordSelectionHistory(
       mode: mode,
       spoken: spoken,
@@ -850,6 +1187,7 @@ final class AppModel: ObservableObject {
     await historyStore.record(
       HistoryEntry(
         mode: mode,
+        modeName: mode == .custom ? operationCustomMode?.name : nil,
         rawTranscript: spoken.text,
         finalText: output,
         applicationName: target.applicationName,
@@ -869,6 +1207,8 @@ final class AppModel: ObservableObject {
       await finishTranslate()
     case .ask:
       await finishAsk()
+    case .custom:
+      await finishCustom()
     case .dictation:
       await finishDictation()
     }
@@ -884,6 +1224,8 @@ final class AppModel: ObservableObject {
       settingsStore.settings.isTranslateActive
     case .ask:
       settingsStore.settings.isAskActive
+    case .custom:
+      settingsStore.settings.areCustomModesActive && operationCustomMode != nil
     }
   }
 
@@ -910,6 +1252,9 @@ final class AppModel: ObservableObject {
 
   private func finishCommand() async {
     guard let operationID, let target = operationTarget else {
+      return
+    }
+    guard await isStillActive(.command) else {
       return
     }
 
@@ -958,6 +1303,7 @@ final class AppModel: ObservableObject {
         throw MicAIError.cancelled
       }
       providerStatus = .readyToAttempt
+      lastResult = result.intent.text
       await recordCommandHistory(result: result, target: target)
       complete(transcript: result.instruction)
     } catch {
@@ -977,6 +1323,27 @@ final class AppModel: ObservableObject {
     }
   }
 
+  /// Stops a network mode that settings no longer allow, and says why.
+  private func abandonSelectionMode(_ mode: MicAIMode, reason: MicAIError) async {
+    guard operationID != nil, operationMode == mode else {
+      return
+    }
+    await cancelSelectionMode(mode)
+    errorMessage = reason.localizedDescription
+    operationPhase = .failed(reason)
+  }
+
+  /// Checked again when a network mode finishes, for a change that landed
+  /// between the key press and the operation starting, where `applySettings`
+  /// has nothing to cancel yet. Returns false after abandoning the operation.
+  private func isStillActive(_ mode: MicAIMode) async -> Bool {
+    guard !isActive(mode) else {
+      return true
+    }
+    await abandonSelectionMode(mode, reason: startBlocker(for: mode))
+    return false
+  }
+
   private func cancelSelectionMode(_ mode: MicAIMode) async {
     guard let operationID else {
       return
@@ -989,18 +1356,27 @@ final class AppModel: ObservableObject {
   private func complete(transcript: Transcript, diagnostic: String? = nil) {
     lastTranscript = transcript.text
     errorMessage = diagnostic
+    playFinishedSound()
     operationPhase = .idle
     clearOperation()
   }
 
   private func complete(composed: ComposedDictation, diagnostic: String? = nil) {
     lastTranscript = composed.text
+    lastResult = composed.text
     lastTone = composed.tone
+    playFinishedSound()
     // A refinement failure is worth surfacing, but it must not mask a real
     // insertion diagnostic, which is the more actionable of the two.
     errorMessage = diagnostic ?? composed.refinementFailure?.localizedDescription
     operationPhase = .idle
     clearOperation()
+  }
+
+  private func playFinishedSound() {
+    if settingsStore.settings.soundFeedback {
+      SoundFeedback.finished()
+    }
   }
 
   // MARK: - History and vocabulary
@@ -1032,12 +1408,14 @@ final class AppModel: ObservableObject {
   private func loadStoredCollections() async {
     await vocabularyStore.load()
     await historyStore.load()
+    await snippetStore.load()
     await refreshStoredCollections()
   }
 
   private func refreshStoredCollections() async {
     historyEntries = await historyStore.all()
     vocabularyEntries = await vocabularyStore.all()
+    snippetEntries = await snippetStore.all()
   }
 
   /// Saves a user edit from the history list and learns the terms it implies.
@@ -1076,6 +1454,20 @@ final class AppModel: ObservableObject {
     }
   }
 
+  func upsertSnippet(trigger: String, text: String) {
+    Task { @MainActor in
+      await snippetStore.upsert(Snippet(trigger: trigger, text: text))
+      await refreshStoredCollections()
+    }
+  }
+
+  func deleteSnippet(id: UUID) {
+    Task { @MainActor in
+      await snippetStore.delete(snippetID: id)
+      await refreshStoredCollections()
+    }
+  }
+
   private func clearOperation(ifAttemptID expectedAttemptID: UUID? = nil) {
     if let expectedAttemptID, operationAttemptID != expectedAttemptID {
       return
@@ -1092,6 +1484,16 @@ final class AppModel: ObservableObject {
     pendingStopMode = nil
     operationMode = nil
     operationTarget = nil
+    isHandsFree = false
+    livePartial = nil
+    operationCustomMode = nil
+    applyDeferredSpeechModel()
+  }
+
+  private func applyDeferredSpeechModel() {
+    if let deferredSpeechModel {
+      switchSpeechModelIfNeeded(to: deferredSpeechModel)
+    }
   }
 
   private func rejectDictationStart(with error: MicAIError) {
@@ -1114,12 +1516,13 @@ final class AppModel: ObservableObject {
       operationPhase = .idle
       inputLevel = 0
       resetAllHotkeys()
+      applyDeferredSpeechModel()
       return
     }
     switch operationMode {
     case .dictation:
       await cancelDictation()
-    case .command, .translate, .ask:
+    case .command, .translate, .ask, .custom:
       await cancelSelectionMode(operationMode ?? .command)
     case nil:
       return
@@ -1135,11 +1538,20 @@ final class AppModel: ObservableObject {
     }
   }
 
+  /// Configured means a model is set, the chosen provider has what it needs
+  /// to sign in, and something uses it: clean-up, Command, Translate, Ask AI
+  /// or a custom mode. Not the Command shortcut alone, since any of those
+  /// sends requests through the same provider.
   private func refreshProviderStatus() {
     let settings = settingsStore.settings
-    let configured = settings.commandHotkey != nil
+    let usesProvider =
+      settings.refinementRoute == .languageModel
+      || settings.commandHotkey != nil
+      || settings.translateHotkey != nil
+      || settings.askHotkey != nil
+      || !settings.customModes.isEmpty
 
-    if !configured {
+    if !usesProvider {
       providerStatus = .notConfigured
     } else if !codexCLIAvailable {
       providerStatus = .failed(.codexCLIUnavailable)

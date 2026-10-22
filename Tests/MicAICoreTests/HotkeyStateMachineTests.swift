@@ -91,3 +91,63 @@ struct HotkeyStateMachineTests {
     #expect(!matchedDuplicateRelease)
   }
 }
+
+@Suite
+struct HybridActivationTests {
+  @Test
+  func longPressBehavesLikeHold() {
+    var machine = HotkeyStateMachine(activationMode: .hybrid)
+
+    #expect(machine.handle(.pressed(isRepeat: false), at: 10) == .startRecording)
+    #expect(machine.handle(.released, at: 11.2) == .stopRecording)
+    #expect(!machine.isRecording)
+    #expect(!machine.isLocked)
+  }
+
+  @Test
+  func quickTapLocksUntilTheNextPress() {
+    var machine = HotkeyStateMachine(activationMode: .hybrid)
+
+    #expect(machine.handle(.pressed(isRepeat: false), at: 10) == .startRecording)
+    #expect(machine.handle(.released, at: 10.1) == .lockRecording)
+    #expect(machine.isRecording)
+    #expect(machine.isLocked)
+
+    // Releasing after the stopping press must not start anything new.
+    #expect(machine.handle(.pressed(isRepeat: false), at: 14) == .stopRecording)
+    #expect(machine.handle(.released, at: 14.05) == nil)
+    #expect(!machine.isRecording)
+    #expect(!machine.isLocked)
+  }
+
+  @Test
+  func releaseExactlyAtTheThresholdCountsAsAHold() {
+    var machine = HotkeyStateMachine(activationMode: .hybrid)
+
+    _ = machine.handle(.pressed(isRepeat: false), at: 0)
+    #expect(
+      machine.handle(.released, at: HotkeyStateMachine.tapThreshold) == .stopRecording
+    )
+  }
+
+  @Test
+  func repeatsWhileHeldAreIgnored() {
+    var machine = HotkeyStateMachine(activationMode: .hybrid)
+
+    _ = machine.handle(.pressed(isRepeat: false), at: 0)
+    #expect(machine.handle(.pressed(isRepeat: true), at: 0.5) == nil)
+    #expect(machine.handle(.released, at: 1) == .stopRecording)
+  }
+
+  @Test
+  func cancelClearsTheLock() {
+    var machine = HotkeyStateMachine(activationMode: .hybrid)
+    _ = machine.handle(.pressed(isRepeat: false), at: 0)
+    _ = machine.handle(.released, at: 0.1)
+
+    #expect(machine.handle(.cancel) == .cancelRecording)
+    #expect(!machine.isLocked)
+    // A fresh press after cancelling starts a new recording, not a stop.
+    #expect(machine.handle(.pressed(isRepeat: false), at: 5) == .startRecording)
+  }
+}

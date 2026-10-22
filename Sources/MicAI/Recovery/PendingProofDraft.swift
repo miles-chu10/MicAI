@@ -10,7 +10,7 @@ struct PendingProofDraftContext {
     switch intent {
     case .insert:
       true
-    case .replaceSelection:
+    case .replaceSelection, .insertAfterSelection:
       currentSelection == draft.sourceText
     }
   }

@@ -13,6 +13,12 @@ public enum MicAIMode: String, Codable, CaseIterable, Sendable {
   /// A spoken question is answered. Content lands at the cursor; a question
   /// opens the answer in a window.
   case ask
+  /// One of the user's own modes. Which one is carried alongside, since there
+  /// can be any number.
+  case custom
+
+  /// The four modes MicAI ships with, for places that list them.
+  public static let builtIn: [MicAIMode] = [.dictation, .command, .translate, .ask]
 
   public var displayName: String {
     switch self {
@@ -24,6 +30,8 @@ public enum MicAIMode: String, Codable, CaseIterable, Sendable {
       "AI Translate"
     case .ask:
       "Ask AI"
+    case .custom:
+      "Custom mode"
     }
   }
 

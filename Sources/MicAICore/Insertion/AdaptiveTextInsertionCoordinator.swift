@@ -19,14 +19,15 @@ public actor AdaptiveTextInsertionCoordinator {
       throw MicAIError.cancelled
     }
 
-    let text: String
     switch intent {
-    case .insert(let value), .replaceSelection(let value):
-      text = value
-    }
-
-    if await directInserter.insert(text, into: target) {
-      return
+    case .insert(let text), .replaceSelection(let text):
+      if await directInserter.insert(text, into: target) {
+        return
+      }
+    case .insertAfterSelection:
+      // Direct insertion writes over the selection, which this intent must
+      // keep; the keyboard path moves past it first.
+      break
     }
 
     try await clipboardFallback.apply(

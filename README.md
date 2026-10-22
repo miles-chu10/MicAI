@@ -1,109 +1,94 @@
 # MicAI
 
-Local-first AI dictation and AI-commands app for macOS: configurable
-transcription with Parakeet TDT v2 on-device ASR or the OpenAI Audio API, plus
-an experimental personal ChatGPT/Codex command route.
+AI dictation for macOS that keeps your voice on your Mac.
 
-## Project status
+Hold a key and speak, and polished text appears at the cursor in whatever app
+you're using. Speech is recognised on the device by
+[Parakeet](https://github.com/FluidInference/FluidAudio). The only thing that
+ever goes over the network is text, and only when you use an AI feature.
 
-MicAI is a personal-use prototype whose source is intended for public,
-open-source development. The repository does not yet contain an open-source
-license, so a license must be chosen before describing redistributed copies as
-open source.
+## What it does
 
-- Ordinary dictation defaults to Parakeet on-device. Settings can select an
-  OpenAI transcription model and an explicit Parakeet offline fallback.
-- The intended hosted route is `gpt-transcribe` through
-  `POST /v1/audio/transcriptions` for a completed bounded recording. This build
-  has no API-key source, so selecting or saving OpenAI never contacts the
-  network; the UI reports the route as unavailable or uses prepared Parakeet
-  when fallback is enabled.
-- Recordings are converted to 16 kHz mono Float32 with FluidAudio's
-  `AVAudioConverter` path and stop automatically at two minutes.
-- Failed insertion keeps the completed result in memory for retry or manual
-  copy, and new recordings wait until that result is resolved. MicAI does not
-  persist transcription history or audio.
-- AI Command results use **proof before paste**: they remain a session-only draft
-  showing source, proposed text, local/network/destination receipt, and captured
-  target until the user explicitly approves insertion. A changed target preserves
-  the draft instead of inserting elsewhere.
-- AI Commands use a read-only local Codex sign-in. This private experimental
-  route is not a supported public OpenAI API authentication method and should
-  not be presented as a distributable integration.
-- No credential is bundled, copied, displayed, or written by MicAI. OpenAI API
-  key storage, billing verification, and the first live transcription remain
-  separate approval-gated work.
-- Local diagnostics contain stable event/error codes and durations only. They
-  omit dictated text, selections, app identities, credentials, requests, and
-  file paths.
+Four modes, each on its own keyboard shortcut:
 
-## Build and run
+| Mode | Default shortcut | What happens |
+| --- | --- | --- |
+| **Dictation** | Right ⌥ | Your words, cleaned up and written in the tone of the app you're in |
+| **Command** | ⌃⌥Space | Select text and say how to change it: "make this friendlier" |
+| **Translate** | ⌃⌥T | Translates the selection, or what you say, into your chosen language |
+| **Ask AI** | ⌃⌥A | Questions open an answer window. Anything else is typed at the cursor |
+
+Command, Translate and Ask AI are off until you turn them on in Settings.
+
+You can add your own **custom modes** too. Each has a name, instructions for
+the model, its own shortcut, and whether the result is typed at the cursor or
+shown in a window. Templates include an email reply, bullet points, and a
+prompt for a coding agent.
+
+Also included:
+
+- **Vocabulary.** Corrections for names and jargon, applied on the Mac. Fix a
+  line in History and MicAI learns the changed words.
+- **Snippets.** Say a trigger phrase on its own and saved text goes in exactly
+  as written.
+- **Hold or tap.** Hold the key to talk, or tap it once to keep recording
+  hands-free until you press it again.
+- **Your rules.** Standing instructions such as "use British spelling", applied
+  to every clean-up.
+- **Live words.** See what MicAI heard above the recording HUD while you
+  speak.
+- **Clean-up on this Mac.** On macOS 26 with Apple Intelligence, clean-up can
+  run on the device, even in privacy mode.
+- **Privacy mode.** One switch that keeps everything on the Mac.
+- **History and stats.** Everything MicAI typed, searchable and correctable,
+  plus words dictated and time saved.
+
+[docs/FEATURES.md](docs/FEATURES.md) compares all of this with Voiskey,
+FluidVoice, VoiceInk, Wispr Flow and Superwhisper.
+
+## Where your words go
+
+| Stays on your Mac | Sent to the language model |
+| --- | --- |
+| Microphone audio, speech recognition, vocabulary, snippets, history, and clean-up when set to Apple Intelligence | The transcript for clean-up, plus the selected text for Command, Translate and Ask AI |
+
+Two providers are supported:
+
+- **ChatGPT subscription.** Uses the ChatGPT sign-in that the
+  [Codex CLI](https://github.com/openai/codex) already stored on your Mac. MicAI
+  reads it and never copies it.
+- **OpenAI API key.** Saved in the macOS Keychain.
+
+## Requirements
+
+- macOS 14 or later on Apple silicon
+- Microphone and Accessibility permission. First-run setup walks you through
+  both.
+- For the AI features: a ChatGPT subscription signed in through Codex, or an
+  OpenAI API key
+
+## Build
+
+No Xcode project. Everything builds with Swift Package Manager:
 
 ```bash
-bash scripts/codex-build.sh
-bash scripts/codex-install.sh --plan
-bash scripts/codex-run.sh
+bash scripts/codex-build.sh   # builds dist/MicAI.app and signs it ad hoc
+bash scripts/codex-run.sh     # builds and opens it
+bash scripts/codex-test.sh    # unit tests
+bash scripts/codex-lint.sh    # swift format lint
 ```
 
-The build command creates and validates the ad-hoc-signed `dist/MicAI.app`,
-including its `MicAI.icns` resource and `CFBundleIconFile` metadata. The install
-command is read-only by default: it compares that artifact with the current
-Applications copy and prints the exact target, backup path, rollback behavior,
-and separately gated `--apply` command. Run that printed command only after
-explicitly approving the persistent replacement it describes. Apply acquires
-one atomic per-target lock, rechecks both bundles immediately before
-replacement, and verifies any rollback against the reviewed original target
-state.
+CI builds, tests, packages and lint-checks every push on macOS
+(`.github/workflows/ci.yml`).
 
-## Common Commands
-
-```bash
-bash scripts/codex-run.sh
-bash scripts/codex-build.sh
-bash scripts/codex-test.sh
-bash scripts/codex-lint.sh
-bash scripts/codex-typecheck.sh
-bash scripts/codex-build-ios-sim.sh
-```
-
-## iOS proof companion
-
-The iOS target is a native SwiftUI companion for reviewing the same proof-carrying
-draft model; it is not an iOS dictation or keyboard-extension implementation. Build
-it without `xcodebuild`, then use an already booted Simulator:
-
-```bash
-bash scripts/codex-build-ios-sim.sh
-bash scripts/codex-run-ios-sim.sh <simulator-udid> primary
-```
-
-Supported deterministic fixtures are `primary`, `approved`, `target-unavailable`,
-`insertion-uncertain`, and `narrow`. They never request microphone permission or
-invoke a provider.
-
-## Project Structure
+## Project layout
 
 ```
-Package.swift  Swift package manifest
-Sources/       MicAICore library and MicAI executable
-Tests/         MicAICore unit tests and MicAI app-state regression tests
-scripts/       Build, run, test, lint, and typecheck entry points
-docs/          Product, engineering, and acceptance documentation
+Sources/MicAICore/   Speech, clean-up, modes, vocabulary, snippets, history, settings
+Sources/MicAI/       The SwiftUI app: menu bar, HUD, Settings, History, setup
+Tests/               Unit tests for MicAICore
+scripts/             Build, run, test and lint entry points
+docs/                Brief, PRD, spec, plan, acceptance criteria, feature research
 ```
 
-`Package.swift` defines both `MicAICoreTests` and `MicAIAppTests` targets.
-`bash scripts/codex-test.sh` runs both through the package-wide Swift test command.
-
-## Transcription settings
-
-Settings separates ordinary dictation from AI Commands:
-
-- **Parakeet — On-device** is the compatibility-safe default and requires the
-  local model to be prepared.
-- **OpenAI — Recommended** exposes an editable transcription model, defaulting
-  to `gpt-transcribe`, plus an explicit Parakeet fallback toggle.
-- AI Command speech always uses Parakeet locally. Its text transformation route
-  remains the separately labeled experimental personal Codex integration.
-
-Provider choice, model text, and fallback preference persist in `UserDefaults`.
-They never contain credentials, and saving them has no network side effect.
+`docs/BRIEF.md` is the product and engineering source of truth.

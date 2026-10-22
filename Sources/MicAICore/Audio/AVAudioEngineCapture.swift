@@ -79,6 +79,22 @@ public actor AVAudioEngineCapture: AudioCapturing {
     )
   }
 
+  public func snapshot(tail: Duration) async -> AudioSnapshot? {
+    guard let accumulator else {
+      return nil
+    }
+    let capture = accumulator.peek(lastSeconds: tail.inSeconds)
+    guard capture.sampleRate > 0,
+      let samples = try? Self.resampleForRecognition(capture.samples, from: capture.sampleRate)
+    else {
+      return nil
+    }
+    return AudioSnapshot(
+      samples: samples,
+      totalDuration: .seconds(Double(capture.totalCount) / capture.sampleRate)
+    )
+  }
+
   public func cancel() async {
     guard let engine else {
       return
@@ -170,5 +186,14 @@ final class AudioAccumulator: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     return (samples, sampleRate)
+  }
+
+  /// Copies only the newest audio, so a preview during a long dictation does
+  /// not copy the whole recording every time.
+  func peek(lastSeconds: Double) -> (samples: [Float], sampleRate: Double, totalCount: Int) {
+    lock.lock()
+    defer { lock.unlock() }
+    let count = min(samples.count, max(0, Int(lastSeconds * sampleRate)))
+    return (Array(samples.suffix(count)), sampleRate, samples.count)
   }
 }

@@ -50,14 +50,16 @@ public actor CommandPipeline {
     model: String,
     levels: @escaping @Sendable (Float) -> Void,
     maximumDurationReached: @escaping @Sendable () -> Void = {},
-    operationStarted: @escaping @Sendable (UUID) async -> Void = { _ in }
+    operationStarted: @escaping @Sendable (UUID) async -> Void = { _ in },
+    partials: (@Sendable (String) -> Void)? = nil
   ) async throws -> UUID {
     let operationID = try await dictationPipeline.begin(
       mode: mode,
       target: target,
       levels: levels,
       maximumDurationReached: maximumDurationReached,
-      operationStarted: operationStarted
+      operationStarted: operationStarted,
+      partials: partials
     )
 
     do {
@@ -106,8 +108,14 @@ public actor CommandPipeline {
   /// Generic in the result so Ask AI can return an answer plus its destination
   /// rather than an `InsertionIntent` -- an answer does not always go to the
   /// cursor, and forcing it through the insertion type would have hidden that.
+  ///
+  /// `worksOnSelectionAlone` is for modes that can act on the selection with
+  /// nothing said (Translate, custom modes): when a selection was captured, a
+  /// silent or too-short recording reaches `produce` as empty speech instead
+  /// of failing.
   public func finish<Value: Sendable>(
     operationID: UUID,
+    worksOnSelectionAlone: Bool = false,
     awaitingLLM: @escaping @Sendable () async -> Void = {},
     produce: @escaping @Sendable (String, String?) async throws -> Value
   ) async throws -> (instruction: Transcript, value: Value) {
@@ -115,7 +123,11 @@ public actor CommandPipeline {
       throw MicAIError.invalidTransition
     }
 
-    let instruction = try await dictationPipeline.finish(operationID: operationID)
+    let hasSelection = context.selectedText?.isEmpty == false
+    let instruction = try await dictationPipeline.finish(
+      operationID: operationID,
+      allowingSilence: worksOnSelectionAlone && hasSelection
+    )
     guard await coordinator.markAwaitingLLM(operationID: operationID) else {
       throw MicAIError.cancelled
     }
