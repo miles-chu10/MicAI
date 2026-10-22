@@ -64,6 +64,11 @@ struct GeneralSettingsView: View {
             text: $draft.llmModel,
             prompt: Text("Optional — blank uses your Codex default")
           )
+          Text(
+            "This override applies to all AI text tasks. Use a text model; audio transcription has its own model setting."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
           LabeledContent("Provider", value: appModel.providerStatus.summary)
         }
 

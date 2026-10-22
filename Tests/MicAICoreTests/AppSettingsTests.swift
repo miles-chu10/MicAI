@@ -29,6 +29,51 @@ struct AppSettingsTests {
     #expect(try settings.validated().llmModel == "gpt-test")
   }
 
+  @Test(arguments: [
+    "gpt-transcribe", " gpt-live-transcribe ", "gpt-4o-transcribe",
+    "gpt-4o-mini-transcribe-2025-12-15", "gpt-4o-transcribe-diarize", "whisper-1",
+  ])
+  func audioOnlyOverridesMigrateWithoutResettingOtherSettings(_ model: String) throws {
+    var original = AppSettings.defaults
+    original.llmModel = model
+    original.dictationHotkey = .controlOptionSpace
+    original.dictationActivationMode = .toggle
+    original.commandHotkey = .commandShiftSpace
+    original.translateHotkey = .controlOptionT
+    original.askHotkey = .controlOptionA
+    original.translationTargetLanguage = "Spanish"
+    original.historyEnabled = false
+    original.historyLimit = 37
+    original.defaultTone = .professional
+    original.styleOverrides = ["synthetic.app": .technical]
+    original.dictationProvider = .openAI
+    original.openAITranscriptionModel = "gpt-transcribe"
+    original.openAITranscriptionFallbackEnabled = false
+    let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(original))
+    original.llmModel = ""
+    #expect(try decoded.validated() == original)
+    let persisted = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(decoded))
+    #expect(persisted == original)
+  }
+
+  @Test
+  func freshAudioOnlyTextOverrideIsRejectedWithoutChangingTheDraft() {
+    var settings = AppSettings.defaults
+    settings.llmModel = " gpt-transcribe "
+    #expect(throws: AppSettingsValidationError.transcriptionOnlyTextModel) {
+      try settings.validated()
+    }
+    #expect(settings.llmModel == " gpt-transcribe ")
+  }
+
+  @Test
+  func arbitraryUnknownModelIsPreservedForCodexValidation() throws {
+    var settings = AppSettings.defaults
+    settings.llmModel = "custom-text-model"
+    let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+    #expect(try decoded.validated().llmModel == "custom-text-model")
+  }
+
   @Test
   func validationAllowsEmptyModelWhileCommandsAreDisabled() throws {
     let settings = AppSettings(

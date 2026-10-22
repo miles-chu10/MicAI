@@ -7,11 +7,7 @@ struct CodexCLIClientTests {
   @Test
   func keepsUserTextOutOfProcessArgumentsAndReturnsOutput() async throws {
     let runner = CapturingCodexRunner(
-      result: CodexCommandResult(
-        terminationStatus: 0,
-        standardOutput: Data("HELLO\n".utf8),
-        standardError: Data()
-      )
+      result: .success("HELLO")
     )
     let temp = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
@@ -34,6 +30,7 @@ struct CodexCLIClientTests {
     #expect(output == "HELLO")
     let invocation = try #require(await runner.invocation)
     #expect(invocation.arguments.contains("--ephemeral"))
+    #expect(invocation.arguments.contains("--json"))
     #expect(invocation.arguments.contains("read-only"))
     #expect(invocation.arguments.contains("shell_tool"))
     #expect(invocation.arguments.contains("gpt-test"))
@@ -63,6 +60,64 @@ struct CodexCLIClientTests {
   }
 
   @Test
+  func reportsUsageSeparatelyAndPreservesExistingTextTrimming() async throws {
+    let reports = UsageReportCollector()
+    let text = "  HELLO\nworld 🐈\n"
+    let runner = CapturingCodexRunner(
+      result: .success(
+        text,
+        usage: #"{"input_tokens":1200,"cached_input_tokens":1024,"output_tokens":8}"#
+      )
+    )
+    let client = CodexCLIClient(
+      executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+      runner: runner,
+      usageHandler: reports.append
+    )
+
+    #expect(
+      try await client.transform(
+        LLMRequest(instruction: "synthetic", selectedText: nil, model: "", kind: .refinement)
+      ) == text.trimmingCharacters(in: .whitespacesAndNewlines)
+    )
+    let report = try #require(reports.values.first)
+    #expect(reports.values.count == 1)
+    #expect(report.route == .codexCLI)
+    #expect(report.task == .refinement)
+    #expect(report.requestedModel == nil)
+    #expect(report.responseModel == nil)
+    #expect(report.usage == LLMUsage(inputTokens: 1200, cachedInputTokens: 1024, outputTokens: 8))
+    #expect(report.usage.cacheWriteTokens == nil)
+    #expect(report.duration >= .zero)
+  }
+
+  @Test
+  func failedOrIncompleteJSONNeverReturnsPartialTextOrUsage() async {
+    let bodies = [
+      #"{"type":"item.completed","item":{"type":"agent_message","text":"PARTIAL"}}"#,
+      #"{"type":"turn.completed"}"#,
+      #"{"type":"turn.failed","error":{"message":"server failed"}}"#,
+      "not json",
+    ]
+    for body in bodies {
+      let reports = UsageReportCollector()
+      let client = CodexCLIClient(
+        executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+        runner: CapturingCodexRunner(
+          result: CodexCommandResult(
+            terminationStatus: 0, standardOutput: Data(body.utf8), standardError: Data()
+          )
+        ),
+        usageHandler: reports.append
+      )
+      await expectFailure(
+        from: client, is: body.contains("turn.failed") ? .llmServerFailure : .llmIncomplete
+      )
+      #expect(reports.values.isEmpty)
+    }
+  }
+
+  @Test
   func missingExecutableReportsSpecificFailure() async {
     let client = CodexCLIClient(
       executableURL: nil,
@@ -86,6 +141,22 @@ struct CodexCLIClientTests {
       runner: runner
     )
 
+    await expectFailure(from: client, is: .llmUnauthorized)
+  }
+
+  @Test
+  func failedExitUsesJSONUnauthorizedErrorWhenStderrIsEmpty() async {
+    let client = CodexCLIClient(
+      executableURL: URL(fileURLWithPath: "/usr/bin/false"),
+      runner: CapturingCodexRunner(
+        result: CodexCommandResult(
+          terminationStatus: 1,
+          standardOutput: Data(
+            #"{"type":"turn.failed","error":{"message":"401 Unauthorized"}}"#.utf8),
+          standardError: Data()
+        )
+      )
+    )
     await expectFailure(from: client, is: .llmUnauthorized)
   }
 
@@ -179,11 +250,26 @@ private actor CapturingCodexRunner: CodexCommandRunning {
 }
 
 extension CodexCommandResult {
-  fileprivate static func success(_ output: String) -> Self {
-    CodexCommandResult(
+  fileprivate static func success(_ output: String, usage: String = "null") -> Self {
+    let item = try! JSONSerialization.data(withJSONObject: [
+      "type": "item.completed",
+      "item": ["type": "agent_message", "text": output],
+    ])
+    return CodexCommandResult(
       terminationStatus: 0,
-      standardOutput: Data(output.utf8),
+      standardOutput: item + Data("\n{\"type\":\"turn.completed\",\"usage\":\(usage)}\n".utf8),
       standardError: Data()
     )
+  }
+}
+
+final class UsageReportCollector: @unchecked Sendable {
+  private let lock = NSLock()
+  private var reports: [LLMUsageReport] = []
+
+  var values: [LLMUsageReport] { lock.withLock { reports } }
+
+  func append(_ report: LLMUsageReport) {
+    lock.withLock { reports.append(report) }
   }
 }

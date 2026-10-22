@@ -97,10 +97,11 @@ public struct PhaseTimingRecorder: Sendable {
   }
 }
 
-/// Recent timings kept in memory only; nothing is written to disk.
+/// Recent timings and content-free provider reports kept in memory only.
 public struct LocalMetrics: Sendable, Equatable {
   public static let capacity = 50
   public private(set) var timings: [OperationTiming] = []
+  public private(set) var languageModelReports: [LLMUsageReport] = []
 
   public init() {}
 
@@ -108,6 +109,13 @@ public struct LocalMetrics: Sendable, Equatable {
     timings.append(timing)
     if timings.count > Self.capacity {
       timings.removeFirst(timings.count - Self.capacity)
+    }
+  }
+
+  public mutating func record(_ report: LLMUsageReport) {
+    languageModelReports.append(report)
+    if languageModelReports.count > Self.capacity {
+      languageModelReports.removeFirst(languageModelReports.count - Self.capacity)
     }
   }
 

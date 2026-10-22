@@ -25,7 +25,9 @@ struct ResponsesRequestTests {
     #expect(object["store"] as? Bool == false)
     #expect(object["stream"] as? Bool == true)
     #expect((object["include"] as? [Any])?.isEmpty == true)
-    #expect(object["prompt_cache_key"] as? String == sessionID.uuidString)
+    #expect(object["prompt_cache_key"] == nil)
+    #expect(object["prompt_cache_options"] == nil)
+    #expect(object["prompt_cache_retention"] == nil)
 
     let metadata = try #require(object["client_metadata"] as? [String: Any])
     #expect(metadata["session_id"] as? String == sessionID.uuidString)

@@ -139,7 +139,6 @@ public struct ResponsesRequest: Sendable {
           )
         ],
         kind: request.kind,
-        promptCacheKey: request.sessionID.uuidString,
         clientMetadata: .init(
           sessionID: request.sessionID.uuidString,
           threadID: request.sessionID.uuidString
@@ -175,7 +174,6 @@ private struct WireRequest: Encodable {
   let model: String
   let input: [InputItem]
   let kind: LLMTaskKind
-  let promptCacheKey: String
   let clientMetadata: ClientMetadata
 
   struct InputItem: Encodable {
@@ -210,7 +208,6 @@ private struct WireRequest: Encodable {
     case store
     case stream
     case include
-    case promptCacheKey = "prompt_cache_key"
     case clientMetadata = "client_metadata"
   }
 
@@ -229,7 +226,6 @@ private struct WireRequest: Encodable {
     try container.encode(false, forKey: .store)
     try container.encode(true, forKey: .stream)
     try container.encode([String](), forKey: .include)
-    try container.encode(promptCacheKey, forKey: .promptCacheKey)
     try container.encode(clientMetadata, forKey: .clientMetadata)
   }
 }

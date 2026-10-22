@@ -96,7 +96,8 @@ final class AppModel: ObservableObject {
     // status seen by one path is the status every path reports.
     let llmClient = CodexCLIClient(
       executableURL: codexExecutableURL,
-      statusHandler: providerStatusRelay.send
+      statusHandler: providerStatusRelay.send,
+      usageHandler: providerStatusRelay.sendUsage
     )
     commandPipeline = CommandPipeline(
       dictationPipeline: pipeline,
@@ -167,6 +168,11 @@ final class AppModel: ObservableObject {
     providerStatusRelay.setHandler { [weak self] status in
       Task { @MainActor [weak self] in
         self?.providerStatus = status
+      }
+    }
+    providerStatusRelay.setUsageHandler { [weak self] report in
+      Task { @MainActor [weak self] in
+        self?.metrics.record(report)
       }
     }
 
@@ -1146,6 +1152,7 @@ final class AppModel: ObservableObject {
 private final class ProviderStatusRelay: @unchecked Sendable {
   private let lock = NSLock()
   private var handler: (@Sendable (ProviderStatus) -> Void)?
+  private var usageHandler: (@Sendable (LLMUsageReport) -> Void)?
 
   func setHandler(
     _ handler: @escaping @Sendable (ProviderStatus) -> Void
@@ -1160,5 +1167,14 @@ private final class ProviderStatusRelay: @unchecked Sendable {
     let handler = self.handler
     lock.unlock()
     handler?(status)
+  }
+
+  func setUsageHandler(_ handler: @escaping @Sendable (LLMUsageReport) -> Void) {
+    lock.withLock { usageHandler = handler }
+  }
+
+  func sendUsage(_ report: LLMUsageReport) {
+    let handler = lock.withLock { usageHandler }
+    handler?(report)
   }
 }

@@ -83,6 +83,7 @@ public enum AppSettingsValidationError: Error, Equatable, Sendable {
   case duplicateHotkeys
   case unusableHotkey
   case emptyTargetLanguage
+  case transcriptionOnlyTextModel
 }
 
 extension AppSettingsValidationError: LocalizedError {
@@ -96,6 +97,9 @@ extension AppSettingsValidationError: LocalizedError {
       "Choose a supported hotkey with modifiers."
     case .emptyTargetLanguage:
       "Enter a language to translate into."
+    case .transcriptionOnlyTextModel:
+      "Choose a text model for AI tasks, or leave the override blank to use your Codex default. "
+        + "Transcription models belong in the audio settings."
     }
   }
 }
@@ -197,6 +201,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
       forKey: .dictationActivationMode
     )
     llmModel = try container.decode(String.self, forKey: .llmModel)
+    // Older builds allowed audio-only models in the shared text override.
+    // Migrate only that field, preserving hotkeys and audio preferences.
+    if Self.isTranscriptionOnlyModel(llmModel) {
+      llmModel = ""
+    }
     refinementEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .refinementEnabled) ?? true
     privacyMode =
@@ -312,6 +321,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     if dictationProvider == .openAI, trimmedTranscriptionModel.isEmpty {
       throw AppSettingsValidationError.emptyOpenAITranscriptionModel
     }
+    if Self.isTranscriptionOnlyModel(trimmedModel) {
+      throw AppSettingsValidationError.transcriptionOnlyTextModel
+    }
 
     var validatedSettings = self
     validatedSettings.llmModel = trimmedModel
@@ -319,6 +331,16 @@ public struct AppSettings: Codable, Equatable, Sendable {
     validatedSettings.historyLimit = min(max(historyLimit, 1), 2_000)
     validatedSettings.openAITranscriptionModel = trimmedTranscriptionModel
     return validatedSettings
+  }
+
+  private static func isTranscriptionOnlyModel(_ model: String) -> Bool {
+    let model = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if model == "whisper-1" { return true }
+    return model.range(
+      of:
+        "^(gpt-transcribe|gpt-live-transcribe|gpt-4o-transcribe|gpt-4o-mini-transcribe|gpt-4o-transcribe-diarize)(-[0-9]{4}-[0-9]{2}-[0-9]{2})?$",
+      options: .regularExpression
+    ) != nil
   }
 
   private enum CodingKeys: String, CodingKey {

@@ -99,6 +99,7 @@ public actor CodexCLIClient: LLMTransforming {
   private let fileManager: FileManager
   private let temporaryDirectory: URL
   private let statusHandler: @Sendable (ProviderStatus) -> Void
+  private let usageHandler: @Sendable (LLMUsageReport) -> Void
 
   public init(
     executableURL: URL? = CodexCLIClient.locateExecutable(),
@@ -106,7 +107,8 @@ public actor CodexCLIClient: LLMTransforming {
     timeout: Duration = CodexCLIClient.defaultTimeout,
     fileManager: FileManager = .default,
     temporaryDirectory: URL = FileManager.default.temporaryDirectory,
-    statusHandler: @escaping @Sendable (ProviderStatus) -> Void = { _ in }
+    statusHandler: @escaping @Sendable (ProviderStatus) -> Void = { _ in },
+    usageHandler: @escaping @Sendable (LLMUsageReport) -> Void = { _ in }
   ) {
     self.executableURL = executableURL
     self.runner = runner
@@ -114,6 +116,7 @@ public actor CodexCLIClient: LLMTransforming {
     self.fileManager = fileManager
     self.temporaryDirectory = temporaryDirectory
     self.statusHandler = statusHandler
+    self.usageHandler = usageHandler
   }
 
   public func transform(_ request: LLMRequest) async throws -> String {
@@ -127,6 +130,8 @@ public actor CodexCLIClient: LLMTransforming {
       temporaryDirectory
       .appendingPathComponent("MicAI-Codex-\(request.sessionID.uuidString)")
     do {
+      try Task.checkCancellation()
+      let started = ContinuousClock.now
       try fileManager.createDirectory(
         at: workingDirectory,
         withIntermediateDirectories: true
@@ -139,16 +144,24 @@ public actor CodexCLIClient: LLMTransforming {
         standardInput: try promptData(for: request),
         currentDirectoryURL: workingDirectory
       )
+      try Task.checkCancellation()
       guard result.terminationStatus == 0 else {
-        throw Self.mapFailure(result.standardError)
+        throw Self.mapFailure(result.standardError + result.standardOutput)
       }
-      guard
-        let output = String(data: result.standardOutput, encoding: .utf8)?
-          .trimmingCharacters(in: .whitespacesAndNewlines),
-        !output.isEmpty
-      else {
-        throw MicAIError.llmIncomplete
-      }
+      var parser = CodexJSONParser()
+      try parser.append(result.standardOutput)
+      let output = try parser.finish().trimmingCharacters(in: .whitespacesAndNewlines)
+      let model = request.model.trimmingCharacters(in: .whitespacesAndNewlines)
+      usageHandler(
+        LLMUsageReport(
+          route: .codexCLI,
+          task: request.kind,
+          requestedModel: model.isEmpty ? nil : model,
+          responseModel: nil,
+          usage: parser.usage,
+          duration: ContinuousClock.now - started
+        )
+      )
 
       statusHandler(.readyToAttempt)
       return output
@@ -198,6 +211,7 @@ public actor CodexCLIClient: LLMTransforming {
     var arguments = [
       "exec",
       "--ephemeral",
+      "--json",
       "--ignore-rules",
       "--skip-git-repo-check",
       "--sandbox", "read-only",

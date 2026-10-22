@@ -78,4 +78,25 @@ struct LocalMetricsTests {
     }
     #expect(metrics.timings.count == LocalMetrics.capacity)
   }
+
+  @Test
+  func contentFreeUsageReportsAreBoundedAndKeepUnknownCounts() {
+    var metrics = LocalMetrics()
+    for index in 0..<(LocalMetrics.capacity + 5) {
+      metrics.record(
+        LLMUsageReport(
+          route: .codexCLI,
+          task: .refinement,
+          requestedModel: nil,
+          responseModel: nil,
+          usage: LLMUsage(inputTokens: index),
+          duration: .milliseconds(index)
+        )
+      )
+    }
+    #expect(metrics.languageModelReports.count == LocalMetrics.capacity)
+    #expect(metrics.languageModelReports.first?.usage.inputTokens == 5)
+    #expect(metrics.languageModelReports.last?.usage.cachedInputTokens == nil)
+    #expect(metrics.timings.isEmpty)
+  }
 }
