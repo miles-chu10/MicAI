@@ -63,6 +63,14 @@ enum MicAITelemetry {
   static func recoveryDismissed() {
     logger.notice("insertion_recovery_dismissed")
   }
+
+  /// Content-free: records only that finished text was kept after a failed
+  /// insertion, never the text.
+  static func resultHeldForRecovery(mode: MicAIMode) {
+    logger.notice(
+      "insertion_result_held mode=\(mode.rawValue, privacy: .public)"
+    )
+  }
 }
 
 extension MicAIError {

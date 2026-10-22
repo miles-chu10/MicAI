@@ -17,6 +17,10 @@ final class AppModel: ObservableObject {
   /// The text MicAI last put somewhere: inserted, or shown as an answer. What
   /// "Paste Last Result" pastes again.
   @Published private(set) var lastResult: String?
+  /// Finished text the current operation is about to insert. If insertion
+  /// fails, it becomes `lastResult` so the menu's Paste and Copy can recover
+  /// it without asking the model again.
+  private var insertionRecovery = InsertionRecovery()
   /// The mode of the operation in flight, for the HUD and the menu bar icon.
   @Published private(set) var operationMode: MicAIMode?
   /// True after a quick tap in "Hold or tap" mode: recording continues until
@@ -735,6 +739,7 @@ final class AppModel: ObservableObject {
         throw MicAIError.cancelled
       }
       operationPhase = .inserting
+      insertionRecovery.prepare(composed.text)
       accessibilityPermission.refresh()
       guard accessibilityPermission.isTrusted else {
         throw MicAIError.accessibilityDenied
@@ -773,7 +778,7 @@ final class AppModel: ObservableObject {
       if await coordinator.isCurrent(operationID: operationID) {
         _ = await coordinator.fail(operationID: operationID, error: micAIError)
       }
-      errorMessage = micAIError.localizedDescription
+      errorMessage = failureMessage(for: micAIError)
       operationPhase = .failed(micAIError)
       clearOperation()
     }
@@ -914,7 +919,7 @@ final class AppModel: ObservableObject {
         return
       }
       let micAIError = (error as? MicAIError) ?? .insertionFailed
-      errorMessage = micAIError.localizedDescription
+      errorMessage = failureMessage(for: micAIError)
       operationPhase = .failed(micAIError)
       clearOperation(ifAttemptID: attemptID)
       hotkeyMonitor.reset(mode: mode)
@@ -1130,6 +1135,7 @@ final class AppModel: ObservableObject {
       throw MicAIError.cancelled
     }
     operationPhase = .inserting
+    insertionRecovery.prepare(output)
     accessibilityPermission.refresh()
     guard accessibilityPermission.isTrusted else {
       throw MicAIError.accessibilityDenied
@@ -1170,7 +1176,7 @@ final class AppModel: ObservableObject {
     if await coordinator.isCurrent(operationID: operationID) {
       _ = await coordinator.fail(operationID: operationID, error: micAIError)
     }
-    errorMessage = micAIError.localizedDescription
+    errorMessage = failureMessage(for: micAIError)
     operationPhase = .failed(micAIError)
     clearOperation()
   }
@@ -1274,6 +1280,7 @@ final class AppModel: ObservableObject {
         throw MicAIError.cancelled
       }
       operationPhase = .inserting
+      insertionRecovery.prepare(result.intent.text)
       accessibilityPermission.refresh()
       guard accessibilityPermission.isTrusted else {
         throw MicAIError.accessibilityDenied
@@ -1292,6 +1299,7 @@ final class AppModel: ObservableObject {
         guard await coordinator.complete(operationID: operationID) else {
           throw MicAIError.cancelled
         }
+        lastResult = result.intent.text
         complete(
           transcript: result.instruction,
           diagnostic: error.localizedDescription
@@ -1317,7 +1325,7 @@ final class AppModel: ObservableObject {
       if await coordinator.isCurrent(operationID: operationID) {
         _ = await coordinator.fail(operationID: operationID, error: micAIError)
       }
-      errorMessage = micAIError.localizedDescription
+      errorMessage = failureMessage(for: micAIError)
       operationPhase = .failed(micAIError)
       clearOperation()
     }
@@ -1468,10 +1476,23 @@ final class AppModel: ObservableObject {
     }
   }
 
+  /// The error to show, plus where to find finished text that could not be
+  /// inserted. Keeping it is the point: a focus change or a missing
+  /// permission must not cost the user a dictation or a model answer.
+  private func failureMessage(for error: MicAIError) -> String {
+    let outcome = insertionRecovery.outcome(for: error)
+    if let kept = outcome.keptText {
+      lastResult = kept
+      MicAITelemetry.resultHeldForRecovery(mode: operationMode ?? .dictation)
+    }
+    return outcome.message
+  }
+
   private func clearOperation(ifAttemptID expectedAttemptID: UUID? = nil) {
     if let expectedAttemptID, operationAttemptID != expectedAttemptID {
       return
     }
+    insertionRecovery.reset()
     if let operationTarget {
       let targetTracker = self.targetTracker
       Task {

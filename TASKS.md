@@ -41,7 +41,7 @@ Base: `integrate/m7-9` (Miles's choice).
 - [x] Step 0: merge `origin/main` (live words, on-device clean-up, custom modes, snippets, hands-free, privacy/history fixes). Codex CLI stays the only AI provider; main's auth-file client, API-key Keychain store and provider picker dropped. Main's redesigned views and HUD replace the M7 views (hotkey recorder, four-way status panel, NativeVisualStyle, MainWindowPresenter). 301 tests green.
 - [x] Step 1: cloud consent — clean-up off for new installs; cloud clean-up needs `cloudCleanupConsented` (older settings pause until confirmed); Settings, privacy list and README match. HUD already labels "sent to ChatGPT" vs "on this Mac".
 - [x] Step 2: Codex CLI prompt carries the task kind and its own contract (command, refinement, translation, ask, custom); selection stays quoted JSON
-- [ ] Step 3: hold finished text when insertion fails (Copy / Retry without a new call / Dismiss)
+- [x] Step 3: finished text that fails to insert becomes Last Result (menu Paste re-captures the focused target, Copy; no new model call); cancel keeps nothing. Logic in `InsertionRecovery` (tested); AppModel wiring untested without a UI target.
 - [ ] Step 4: compact HUD states (held result, destination badge)
 - [ ] Step 5: cold/warm baselines, model unload, idle eviction, task size budgets
 - [ ] Later: Protected facts; notarization with the Developer ID Application certificate; Claude Design site
