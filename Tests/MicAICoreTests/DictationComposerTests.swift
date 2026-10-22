@@ -94,6 +94,32 @@ struct DictationComposerTests {
   }
 
   @Test
+  func settingsFromBeforeConsentMakeNoProviderCall() async throws {
+    // An older build saved clean-up as on by default. After the update it
+    // must stay local until the user allows sending text.
+    let legacy = """
+      {
+        "dictationHotkey": { "keyCode": 61, "modifiers": [] },
+        "dictationActivationMode": "hold",
+        "llmModel": "",
+        "refinementEnabled": true
+      }
+      """
+    let settings = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
+    let harness = try await Harness()
+
+    let result = await harness.composer.compose(
+      transcript: transcript("please send the draft on Tuesday at 3 PM"),
+      mode: .dictation,
+      target: harness.slackTarget,
+      settings: settings
+    )
+
+    #expect(result.text == "please send the draft on Tuesday at 3 PM")
+    #expect(await harness.refiner.callCount == 0)
+  }
+
+  @Test
   func refinementFailureStillInsertsTheTranscript() async throws {
     let harness = try await Harness()
     await harness.refiner.setFailure(.llmRateLimited)

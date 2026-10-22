@@ -44,4 +44,11 @@ struct InsertionRecoveryTests {
 
     #expect(recovery.outcome(for: .targetChanged).keptText == nil)
   }
+
+  @Test
+  func emptyTextIsNotKept() {
+    var recovery = InsertionRecovery()
+    recovery.prepare("")
+    #expect(recovery.outcome(for: .targetChanged).keptText == nil)
+  }
 }
