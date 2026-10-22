@@ -19,6 +19,13 @@ struct StyleSettingsPane: View {
           }
         }
         .disabled(!draft.refinementEnabled)
+        if draft.refinementEnabled, draft.cleanupEngine == .languageModel {
+          Toggle(
+            "Send each dictation’s text to ChatGPT for clean-up",
+            isOn: $draft.cloudCleanupConsented
+          )
+          .accessibilityHint("Text goes through your Codex CLI. Audio never leaves this Mac.")
+        }
         if let note = cleanupNote {
           Label(note.text, systemImage: note.symbol)
             .foregroundStyle(note.isWarning ? Color.red : Color.secondary)
@@ -147,10 +154,18 @@ struct StyleSettingsPane: View {
       if draft.privacyMode {
         return ("Privacy mode is on, so clean-up is paused.", "hand.raised.fill", true)
       }
-      if draft.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        return ("Choose a model in General to turn clean-up on.", "info.circle", false)
+      if !draft.cloudCleanupConsented {
+        return (
+          "Clean-up is off until you allow sending dictation text to ChatGPT.",
+          "hand.raised.fill",
+          true
+        )
       }
-      return nil
+      return (
+        "Each dictation’s text goes to ChatGPT through your Codex CLI. Audio stays on this Mac.",
+        "cloud",
+        false
+      )
     }
   }
 

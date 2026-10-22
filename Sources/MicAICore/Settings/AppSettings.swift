@@ -215,8 +215,14 @@ public struct AppSettings: Codable, Equatable, Sendable {
   public var openAITranscriptionFallbackEnabled: Bool
 
   /// Send dictated transcripts through the LLM for clean-up and tone matching.
-  /// Off means Parakeet's output goes to the cursor as-is.
+  /// Off means Parakeet's output goes to the cursor as-is. Off for new
+  /// installs, so dictation stays on this Mac until the user opts in.
   public var refinementEnabled: Bool
+  /// The user agreed, in Settings, that clean-up may send each dictation's text
+  /// to ChatGPT. Required for the language-model route; on-device clean-up
+  /// does not need it. Older settings lack it, so cloud clean-up that was only
+  /// on by default pauses until the user confirms it.
+  public var cloudCleanupConsented: Bool
   /// Hard local-only switch. Nothing leaves the machine: no refinement, no AI
   /// commands. Overrides `refinementEnabled` rather than editing it, so turning
   /// privacy mode back off restores the user's previous choice.
@@ -261,7 +267,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     commandHotkey: Hotkey?,
     dictationActivationMode: DictationActivationMode,
     llmModel: String,
-    refinementEnabled: Bool = true,
+    refinementEnabled: Bool = false,
+    cloudCleanupConsented: Bool = false,
     privacyMode: Bool = false,
     historyEnabled: Bool = true,
     historyLimit: Int = TranscriptHistoryStore.defaultLimit,
@@ -286,6 +293,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     self.dictationActivationMode = dictationActivationMode
     self.llmModel = llmModel
     self.refinementEnabled = refinementEnabled
+    self.cloudCleanupConsented = cloudCleanupConsented
     self.privacyMode = privacyMode
     self.historyEnabled = historyEnabled
     self.historyLimit = historyLimit
@@ -324,7 +332,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
       llmModel = ""
     }
     refinementEnabled =
-      try container.decodeIfPresent(Bool.self, forKey: .refinementEnabled) ?? true
+      try container.decodeIfPresent(Bool.self, forKey: .refinementEnabled) ?? false
+    cloudCleanupConsented =
+      try container.decodeIfPresent(Bool.self, forKey: .cloudCleanupConsented) ?? false
     privacyMode =
       try container.decodeIfPresent(Bool.self, forKey: .privacyMode) ?? false
     historyEnabled =
@@ -382,10 +392,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     )
   }
 
-  /// Refinement runs whenever it is enabled and privacy mode is off. A blank
-  /// model is passed through so the Codex CLI subscription default applies.
+  /// Cloud refinement runs only when it is enabled, the user consented to
+  /// sending dictation text, and privacy mode is off. A blank model is passed
+  /// through so the Codex CLI subscription default applies.
   public var isRefinementActive: Bool {
-    refinementEnabled && !privacyMode
+    refinementEnabled && cloudCleanupConsented && !privacyMode
   }
 
   /// Which refiner a dictation uses, or nil to insert it as recognised.
@@ -522,6 +533,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     case openAITranscriptionModel
     case openAITranscriptionFallbackEnabled
     case refinementEnabled
+    case cloudCleanupConsented
     case privacyMode
     case historyEnabled
     case historyLimit

@@ -50,22 +50,20 @@ FluidVoice, VoiceInk, Wispr Flow and Superwhisper.
 
 | Stays on your Mac | Sent to the language model |
 | --- | --- |
-| Microphone audio, speech recognition, vocabulary, snippets, history, and clean-up when set to Apple Intelligence | The transcript for clean-up, plus the selected text for Command, Translate and Ask AI |
+| Microphone audio, speech recognition, vocabulary, snippets, history, and clean-up when set to Apple Intelligence | The transcript for clean-up (only after you allow it in Settings), plus the selected text for Command, Translate, Ask AI and custom modes |
 
-Two providers are supported:
-
-- **ChatGPT subscription.** Uses the ChatGPT sign-in that the
-  [Codex CLI](https://github.com/openai/codex) already stored on your Mac. MicAI
-  reads it and never copies it.
-- **OpenAI API key.** Saved in the macOS Keychain.
+AI text tasks run through the [Codex CLI](https://github.com/openai/codex) you
+are already signed in to, so they use your ChatGPT subscription. MicAI never
+reads the CLI's credentials. Dictation clean-up with ChatGPT is off until you
+turn it on and allow it in Settings; clean-up with Apple Intelligence stays on
+the Mac.
 
 ## Requirements
 
 - macOS 14 or later on Apple silicon
 - Microphone and Accessibility permission. First-run setup walks you through
   both.
-- For the AI features: a ChatGPT subscription signed in through Codex, or an
-  OpenAI API key
+- For the AI features: the Codex CLI, signed in with a ChatGPT subscription
 
 ## Build
 

@@ -222,6 +222,7 @@ struct AppSettingsTests {
           "dictationActivationMode",
           "llmModel",
           "refinementEnabled",
+          "cloudCleanupConsented",
           "privacyMode",
           "historyEnabled",
           "historyLimit",
@@ -267,7 +268,8 @@ struct AppSettingsCompatibilityTests {
 
     #expect(settings.dictationHotkey == .rightOption)
     #expect(settings.llmModel == "gpt-5-codex")
-    #expect(settings.refinementEnabled)
+    // Clean-up was never chosen, so it stays off and dictation stays local.
+    #expect(!settings.refinementEnabled)
     #expect(!settings.privacyMode)
     #expect(settings.historyEnabled)
     #expect(settings.defaultTone == .neutral)
@@ -292,10 +294,12 @@ struct AppSettingsCompatibilityTests {
   }
 
   @Test
-  func refinementRunsWithTheSubscriptionDefaultModel() {
+  func refinementRunsWithTheSubscriptionDefaultModelOnceConsented() {
     var settings = AppSettings.defaults
     settings.refinementEnabled = true
+    #expect(!settings.isRefinementActive)
 
+    settings.cloudCleanupConsented = true
     #expect(settings.isRefinementActive)
 
     settings.privacyMode = true
@@ -307,6 +311,8 @@ struct AppSettingsCompatibilityTests {
     var settings = AppSettings.defaults
     settings.llmModel = "gpt-5-codex"
     settings.commandHotkey = .controlOptionSpace
+    settings.refinementEnabled = true
+    settings.cloudCleanupConsented = true
     settings.privacyMode = true
 
     #expect(!settings.isRefinementActive)
@@ -553,6 +559,7 @@ struct FeatureSettingsCompatibilityTests {
   @Test
   func onDeviceCleanUpRunsInPrivacyModeAndWithoutAModel() {
     var settings = AppSettings.defaults
+    settings.refinementEnabled = true
     settings.cleanupEngine = .onDevice
     settings.privacyMode = true
     #expect(settings.llmModel.isEmpty)
@@ -566,6 +573,7 @@ struct FeatureSettingsCompatibilityTests {
   func languageModelCleanUpUsesTheCodexDefaultButNotInPrivacyMode() {
     var settings = AppSettings.defaults
     settings.refinementEnabled = true
+    settings.cloudCleanupConsented = true
     settings.cleanupEngine = .languageModel
     #expect(settings.llmModel.isEmpty)
     #expect(settings.refinementRoute == .languageModel)
@@ -596,5 +604,57 @@ struct FeatureSettingsCompatibilityTests {
     #expect(Hotkey.rightOption.keyCaps == ["Right ⌥"])
     #expect(Hotkey.controlOptionSpace.keyCaps == ["⌃", "⌥", "Space"])
     #expect(Hotkey.commandShiftSpace.keyCaps == ["⇧", "⌘", "Space"])
+  }
+}
+
+@Suite
+struct CloudCleanupConsentTests {
+  @Test
+  func newInstallsKeepDictationOnThisMac() {
+    let settings = AppSettings.defaults
+    #expect(!settings.refinementEnabled)
+    #expect(!settings.cloudCleanupConsented)
+    #expect(settings.refinementRoute == nil)
+  }
+
+  @Test
+  func olderSettingsKeepTheirChoiceButPauseCloudCleanUpUntilConfirmed() throws {
+    let legacy = """
+      {
+        "dictationHotkey": { "keyCode": 61, "modifiers": [] },
+        "dictationActivationMode": "hold",
+        "llmModel": "",
+        "refinementEnabled": true
+      }
+      """
+    var settings = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
+
+    #expect(settings.refinementEnabled)
+    #expect(!settings.cloudCleanupConsented)
+    #expect(settings.refinementRoute == nil)
+
+    settings.cloudCleanupConsented = true
+    #expect(settings.refinementRoute == .languageModel)
+  }
+
+  @Test
+  func onDeviceCleanUpNeedsNoCloudConsent() {
+    var settings = AppSettings.defaults
+    settings.refinementEnabled = true
+    settings.cleanupEngine = .onDevice
+    #expect(settings.refinementRoute == .onDevice)
+  }
+
+  @Test
+  func consentSurvivesARoundTrip() throws {
+    var settings = AppSettings.defaults
+    settings.refinementEnabled = true
+    settings.cloudCleanupConsented = true
+    let decoded = try JSONDecoder().decode(
+      AppSettings.self,
+      from: JSONEncoder().encode(settings)
+    )
+    #expect(decoded.cloudCleanupConsented)
+    #expect(decoded.refinementRoute == .languageModel)
   }
 }

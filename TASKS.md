@@ -39,7 +39,7 @@ Base: `integrate/m7-9` (Miles's choice).
 
 - [x] Preserve Codex's uncommitted caching/usage work verbatim (`bdd044c`, 244 tests green before merge)
 - [x] Step 0: merge `origin/main` (live words, on-device clean-up, custom modes, snippets, hands-free, privacy/history fixes). Codex CLI stays the only AI provider; main's auth-file client, API-key Keychain store and provider picker dropped. Main's redesigned views and HUD replace the M7 views (hotkey recorder, four-way status panel, NativeVisualStyle, MainWindowPresenter). 301 tests green.
-- [ ] Step 1: cloud consent — local-only default, deliberate migration, destination labels
+- [x] Step 1: cloud consent — clean-up off for new installs; cloud clean-up needs `cloudCleanupConsented` (older settings pause until confirmed); Settings, privacy list and README match. HUD already labels "sent to ChatGPT" vs "on this Mac".
 - [ ] Step 2: per-task prompt contracts on the Codex CLI path
 - [ ] Step 3: hold finished text when insertion fails (Copy / Retry without a new call / Dismiss)
 - [ ] Step 4: compact HUD states (held result, destination badge)

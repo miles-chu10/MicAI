@@ -61,6 +61,39 @@ struct DictationComposerTests {
   }
 
   @Test
+  func defaultSettingsMakeNoProviderCall() async throws {
+    let harness = try await Harness()
+
+    let result = await harness.composer.compose(
+      transcript: transcript("please send the draft on Tuesday at 3 PM"),
+      mode: .dictation,
+      target: harness.slackTarget,
+      settings: .defaults
+    )
+
+    #expect(result.text == "please send the draft on Tuesday at 3 PM")
+    #expect(!result.refined)
+    #expect(await harness.refiner.callCount == 0)
+  }
+
+  @Test
+  func cloudCleanUpWithoutConsentMakesNoProviderCall() async throws {
+    let harness = try await Harness()
+    var settings = harness.settings()
+    settings.cloudCleanupConsented = false
+
+    let result = await harness.composer.compose(
+      transcript: transcript("please send the draft on Tuesday at 3 PM"),
+      mode: .dictation,
+      target: harness.slackTarget,
+      settings: settings
+    )
+
+    #expect(!result.refined)
+    #expect(await harness.refiner.callCount == 0)
+  }
+
+  @Test
   func refinementFailureStillInsertsTheTranscript() async throws {
     let harness = try await Harness()
     await harness.refiner.setFailure(.llmRateLimited)
@@ -269,6 +302,7 @@ struct DictationComposerTests {
       history: TranscriptHistoryStore(file: directory.appendingPathComponent("h.json"))
     )
     var settings = AppSettings.defaults
+    settings.refinementEnabled = true
     settings.cleanupEngine = .onDevice
 
     let result = await composer.compose(
@@ -338,7 +372,9 @@ private struct Harness {
       dictationHotkey: .rightOption,
       commandHotkey: nil,
       dictationActivationMode: .hold,
-      llmModel: "gpt-5-codex"
+      llmModel: "gpt-5-codex",
+      refinementEnabled: true,
+      cloudCleanupConsented: true
     )
   }
 }
